@@ -28,6 +28,12 @@ jobs:
         run: claude --version
       - name: Version floor in code matches this matrix
         run: grep -q "MIN_VERSION = '2.1.304'" hooks/register.ts
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Example packs compile and parse
+        run: python3 -I scripts/check-examples.py
       - name: Validate
         run: claude plugin validate .
       - name: Test
