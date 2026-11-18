@@ -1,0 +1,32 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Newest Claude Code can break a mod. Check weekly, not only on pushes.
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 2.1.304 is the version floor. latest is the newest release.
+        claude-code: ['2.1.304', 'latest']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install Claude Code ${{ matrix.claude-code }}
+        run: npm install -g @anthropic-ai/claude-code@${{ matrix.claude-code }}
+      - name: Show version
+        run: claude --version
+      - name: Validate
+        run: claude plugin validate .
+      - name: Test
+        run: claude plugin test .

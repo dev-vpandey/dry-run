@@ -1,0 +1,13 @@
+{
+  "name": "dry-run",
+  "owner": {
+    "name": "dev-vpandey"
+  },
+  "plugins": [
+    {
+      "name": "dry-run",
+      "source": "./"
+    }
+  ],
+  "description": "Mods by dev-vpandey for Claude Code."
+}

@@ -1,0 +1,41 @@
+{
+  "name": "dry-run",
+  "version": "0.1.0",
+  "description": "Claude explains its design before it touches your code. A gate blocks code edits until you say go.",
+  "author": { "name": "dev-vpandey" },
+  "license": "MIT",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "explainLanguage": {
+      "type": "string",
+      "title": "Explain language",
+      "description": "Language you read well (for example java). Claude then explains code in other languages with it. Use off to switch this off.",
+      "default": "off"
+    },
+    "practiceRepoPath": {
+      "type": "string",
+      "title": "Practice repo path",
+      "description": "Folder of your DSA practice repo. Leave empty to switch the practice feed off.",
+      "default": ""
+    },
+    "examplePack": {
+      "type": "string",
+      "title": "Example pack",
+      "description": "Which example pack the rules tool returns.",
+      "options": ["generic", "data-pipeline"],
+      "default": "generic"
+    },
+    "coach": {
+      "type": "boolean",
+      "title": "Design Coach",
+      "description": "Review each dry run with a second model. Advice only.",
+      "default": true
+    },
+    "sound": {
+      "type": "boolean",
+      "title": "Sound",
+      "description": "Play short sounds when the gate opens or blocks. macOS only.",
+      "default": false
+    }
+  }
+}
