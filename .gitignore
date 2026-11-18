@@ -1,4 +1,5 @@
 .DS_Store
 node_modules/
+# Type files the engine generates here. Not ours.
 .claude-plugin/types/
 .scratch/
