@@ -18,6 +18,9 @@ const LOCKED_ENDINGS = new Set([
 ])
 
 // Folders where any file is free. Each is a run of folder names.
+// Known gaps against SPEC section 3:
+// - The session scratchpad is not free yet. No `$` call gives its path.
+// - `.claude/plans` matches anywhere in the path, not only under the home folder.
 const FREE_FOLDERS = [['.scratch'], ['.claude', 'plans']]
 
 // Splits a path into folder names. Drops "" and ".". Resolves "..".
