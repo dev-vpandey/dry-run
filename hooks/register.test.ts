@@ -14,7 +14,7 @@ function run($: any, command: string) {
 const EDIT_LOCKED = { tool: 'Edit', file_path: 'src/Foo.py', old_string: 'a', new_string: 'b' } as const
 const EDIT_FREE = { tool: 'Edit', file_path: 'README.md', old_string: 'a', new_string: 'b' } as const
 
-type Stubs = { version?: string; refuseCommand?: string }
+type Stubs = { version?: string; refuseCommand?: string; home?: string }
 
 // Each hook here stands for the engine, beneath the mod.
 // The mod forwards each of these events with next(e), so each needs a stub.
@@ -34,6 +34,7 @@ function stubEngine(on: any, stubs: Stubs = {}) {
     toasts.push(e.text)
     return { value: undefined }
   })
+  on('env.get', (_: unknown, e: { name: string }) => ({ value: e.name === 'HOME' ? (stubs.home ?? '/Users/me') : undefined }))
   on('tool.call', () => ({ result: {} }))
   return { toasts, registered }
 }
@@ -130,4 +131,30 @@ test('when /stop clashes, /hold takes its place', async ($, on) => {
   expect(registered).toEqual(['go', 'hold'])
   await run($, 'hold')
   expect(await $.tool.call(EDIT_LOCKED)).toEqual({ deny: DENY_TEXT })
+})
+
+test('a repo plans folder is locked, the home plans folder is free', async ($, on) => {
+  stubEngine(on, { home: '/Users/me' })
+  await start($)
+
+  const repoPlans = { tool: 'Edit', file_path: '/repo/.claude/plans/x.py', old_string: 'a', new_string: 'b' } as const
+  const homePlans = { tool: 'Edit', file_path: '/Users/me/.claude/plans/x.py', old_string: 'a', new_string: 'b' } as const
+  expect(await $.tool.call(repoPlans)).toEqual({ deny: DENY_TEXT })
+  expect(await $.tool.call(homePlans)).toEqual({ result: {} })
+})
+
+test('the session scratchpad is free', async ($, on) => {
+  stubEngine(on)
+  await start($)
+
+  const scratch = { tool: 'Edit', file_path: '/private/tmp/claude-501/p/s1/scratchpad/a.py', old_string: 'a', new_string: 'b' } as const
+  expect(await $.tool.call(scratch)).toEqual({ result: {} })
+})
+
+test('a second session.start registers /go and /stop only once', async ($, on) => {
+  const { registered } = stubEngine(on)
+  await start($)
+  await start($)
+
+  expect(registered).toEqual(['go', 'stop'])
 })

@@ -17,11 +17,16 @@ const LOCKED_ENDINGS = new Set([
   '.ipynb',
 ])
 
-// Folders where any file is free. Each is a run of folder names.
-// Known gaps against SPEC section 3:
-// - The session scratchpad is not free yet. No `$` call gives its path.
-// - `.claude/plans` matches anywhere in the path, not only under the home folder.
-const FREE_FOLDERS = [['.scratch'], ['.claude', 'plans']]
+// A run of folder names, for example ['.scratch'].
+type Run = string[]
+
+// Folders where any file is free, wherever they sit in the path.
+const FREE_ANYWHERE: Run[] = [['.scratch']]
+
+// The scratchpad of a session sits in a folder called "scratchpad" under one
+// of these temp folders. No `$` call gives its exact path, so match this shape.
+const TEMP_ROOTS: Run[] = [['tmp'], ['private', 'tmp'], ['var', 'folders']]
+const SCRATCHPAD = 'scratchpad'
 
 // Splits a path into folder names. Drops "" and ".". Resolves "..".
 // A ".." with nothing to remove stays, so "../x.py" keeps its "..".
@@ -42,16 +47,52 @@ function splitPath(path: string): string[] {
   return names
 }
 
-// True when `folder` appears as a run of names in the path, before the file name.
-function isUnderFolder(folders: string[], folder: string[]): boolean {
-  for (let start = 0; start + folder.length <= folders.length; start++) {
-    let matches = true
-    for (let i = 0; i < folder.length; i++) {
-      if (folders[start + i] !== folder[i]) {
-        matches = false
-      }
+// True when `run` appears inside `folders`, anywhere.
+function containsRun(folders: string[], run: Run): boolean {
+  for (let start = 0; start + run.length <= folders.length; start++) {
+    if (startsWithRun(folders.slice(start), run)) {
+      return true
     }
-    if (matches) {
+  }
+  return false
+}
+
+// True when `folders` begins with `run`. An empty `run` never matches,
+// so an unknown home folder frees nothing.
+function startsWithRun(folders: string[], run: Run): boolean {
+  if (run.length === 0 || run.length > folders.length) {
+    return false
+  }
+  for (let i = 0; i < run.length; i++) {
+    if (folders[i] !== run[i]) {
+      return false
+    }
+  }
+  return true
+}
+
+// "~/x" becomes "<home>/x". Without a home folder the "~" stays as it is.
+function expandHome(path: string, home: string): string {
+  if (home !== '' && (path === '~' || path.startsWith('~/'))) {
+    return home + path.slice(1)
+  }
+  return path
+}
+
+// True when the folders sit in a free place.
+function isFreeFolder(folders: string[], home: string): boolean {
+  for (const run of FREE_ANYWHERE) {
+    if (containsRun(folders, run)) {
+      return true
+    }
+  }
+  // ~/.claude/plans, only under the real home folder.
+  if (startsWithRun(folders, [...splitPath(home), '.claude', 'plans'])) {
+    return true
+  }
+  // The session scratchpad: <temp folder>/.../scratchpad/...
+  for (const root of TEMP_ROOTS) {
+    if (startsWithRun(folders, root) && folders.slice(root.length).includes(SCRATCHPAD)) {
       return true
     }
   }
@@ -69,19 +110,18 @@ function endingOf(fileName: string): string {
 }
 
 // True when the gate must lock this path. Throws when the input is not a path.
-export function isLocked(path: unknown): boolean {
+// `home` is the user's home folder. "" means unknown, so no plans folder is free.
+export function isLocked(path: unknown, home: string = ''): boolean {
   if (typeof path !== 'string' || path.trim() === '') {
     throw new Error('gate: no file path in the tool call')
   }
-  const names = splitPath(path)
+  const names = splitPath(expandHome(path, home))
   if (names.length === 0) {
     throw new Error(`gate: not a file path: ${path}`)
   }
   const fileName = names.pop() ?? ''
-  for (const folder of FREE_FOLDERS) {
-    if (isUnderFolder(names, folder)) {
-      return false
-    }
+  if (isFreeFolder(names, home)) {
+    return false
   }
   return LOCKED_ENDINGS.has(endingOf(fileName))
 }

@@ -26,6 +26,8 @@ jobs:
         run: npm install -g @anthropic-ai/claude-code@${{ matrix.claude-code }}
       - name: Show version
         run: claude --version
+      - name: Version floor in code matches this matrix
+        run: grep -q "MIN_VERSION = '2.1.304'" hooks/register.ts
       - name: Validate
         run: claude plugin validate .
       - name: Test
