@@ -36,6 +36,8 @@ function stubEngine(on: any, stubs: Stubs = {}) {
   })
   on('env.get', (_: unknown, e: { name: string }) => ({ value: e.name === 'HOME' ? (stubs.home ?? '/Users/me') : undefined }))
   on('tool.call', () => ({ result: {} }))
+  on('prompt.submit', (_: unknown, e: { text: string }) => ({ text: e.text }))
+  on('turn.complete', (_: unknown, e: { answer: string }) => ({ text: e.answer }))
   return { toasts, registered }
 }
 
@@ -157,4 +159,169 @@ test('a second session.start registers /go and /stop only once', async ($, on) =
   await start($)
 
   expect(registered).toEqual(['go', 'stop'])
+})
+
+// ---- dry run detect and go words (ticket 22) ----
+
+const DRY_RUN = [
+  '## Dry run',
+  '### 1. Bug and goal',
+  '### 2. Change table',
+  '| `src/Foo.java` | edit | why |',
+  '### 3. SOLID',
+  '### 4. Pattern',
+  '### 5. DSA',
+  '### 6. Worked example',
+  '### 7. Open decisions',
+].join('\n')
+
+const NO_DRY_RUN = '## Dry run\n### 1. Bug and goal\nonly two headings'
+
+function submit($: any, text: string, extra: object = {}) {
+  return $.prompt.submit({ text, wait: false, origin: { kind: 'composer' }, ...extra })
+}
+
+function complete($: any, answer: string, extra: object = {}) {
+  return $.turn.complete({ answer, reason: 'answer', ...extra })
+}
+
+test('a dry run locks the gate, a go word opens it', async ($, on) => {
+  stubEngine(on)
+  await start($)
+  await run($, 'go')
+
+  await complete($, DRY_RUN)
+  expect(await $.tool.call(EDIT_LOCKED)).toEqual({ deny: DENY_TEXT })
+
+  await submit($, 'go ahead')
+  expect(await $.tool.call(EDIT_LOCKED)).toEqual({ result: {} })
+})
+
+test('a message with a heading missing is not a dry run: the gate stays as it was', async ($, on) => {
+  stubEngine(on)
+  await start($)
+  await run($, 'go')
+
+  await complete($, NO_DRY_RUN)
+
+  expect(await $.tool.call(EDIT_LOCKED)).toEqual({ result: {} })
+})
+
+test('relock: a new dry run after a go locks the gate again', async ($, on) => {
+  stubEngine(on)
+  await start($)
+  await complete($, DRY_RUN)
+  await submit($, 'go')
+  expect(await $.tool.call(EDIT_LOCKED)).toEqual({ result: {} })
+
+  await complete($, DRY_RUN)
+  expect(await $.tool.call(EDIT_LOCKED)).toEqual({ deny: DENY_TEXT })
+
+  await submit($, 'go')
+  expect(await $.tool.call(EDIT_LOCKED)).toEqual({ result: {} })
+})
+
+test('one go covers one dry run: a second go word with nothing waiting is dropped', async ($, on) => {
+  stubEngine(on)
+  await start($)
+  await complete($, DRY_RUN)
+  await submit($, 'go')
+
+  expect(await submit($, 'go')).toEqual({ drop: 'no dry run to approve' })
+})
+
+test('a longer message is not a go', async ($, on) => {
+  stubEngine(on)
+  await start($)
+  await complete($, DRY_RUN)
+
+  await submit($, 'go ahead and fix tests too')
+
+  expect(await $.tool.call(EDIT_LOCKED)).toEqual({ deny: DENY_TEXT })
+})
+
+test('no dry run waiting: go is dropped, just do it opens the gate', async ($, on) => {
+  stubEngine(on)
+  await start($)
+
+  expect(await submit($, 'go ahead')).toEqual({ drop: 'no dry run to approve' })
+  expect(await $.tool.call(EDIT_LOCKED)).toEqual({ deny: DENY_TEXT })
+
+  expect(await submit($, 'just do it')).toEqual({ text: 'just do it' })
+  expect(await $.tool.call(EDIT_LOCKED)).toEqual({ result: {} })
+})
+
+test('a go word from a subagent, a hidden prompt, a command or a notification is not a go', async ($, on) => {
+  stubEngine(on)
+  await start($)
+  await complete($, DRY_RUN)
+
+  await submit($, 'go', { agentId: 'a1' })
+  await submit($, 'go', { isMeta: true })
+  await submit($, 'go', { origin: { kind: 'notification' } })
+  await submit($, 'go', { command: { name: 'x' } })
+
+  expect(await $.tool.call(EDIT_LOCKED)).toEqual({ deny: DENY_TEXT })
+})
+
+test('a dry run written by a subagent does not wait for a go', async ($, on) => {
+  stubEngine(on)
+  await start($)
+  await run($, 'go')
+
+  await complete($, DRY_RUN, { agentId: 'a1' })
+
+  expect(await $.tool.call(EDIT_LOCKED)).toEqual({ result: {} })
+})
+
+test('/stop and a new session clear the waiting dry run', async ($, on) => {
+  stubEngine(on)
+  await start($)
+  await complete($, DRY_RUN)
+  await run($, 'stop')
+  expect(await submit($, 'go')).toEqual({ drop: 'no dry run to approve' })
+
+  await complete($, DRY_RUN)
+  await start($)
+  expect(await submit($, 'go')).toEqual({ drop: 'no dry run to approve' })
+})
+
+test('a go word sent from the Remote Control bridge counts as a go', async ($, on) => {
+  stubEngine(on)
+  await start($)
+  await complete($, DRY_RUN)
+
+  await submit($, 'go', { origin: { kind: 'bridge' } })
+
+  expect(await $.tool.call(EDIT_LOCKED)).toEqual({ result: {} })
+})
+
+test('a go word from an SDK host or a plugin is not a go', async ($, on) => {
+  stubEngine(on)
+  await start($)
+  await complete($, DRY_RUN)
+
+  await submit($, 'go', { origin: { kind: 'sdk' } })
+  await submit($, 'go', { origin: { kind: 'plugin' } })
+
+  expect(await $.tool.call(EDIT_LOCKED)).toEqual({ deny: DENY_TEXT })
+})
+
+test('when the mod is off, a dry run and a go word change nothing', async ($, on) => {
+  stubEngine(on, { version: '2.1.200' })
+  await start($)
+
+  await complete($, DRY_RUN)
+  expect(await submit($, 'go')).toEqual({ text: 'go' })
+  expect(await $.tool.call(EDIT_LOCKED)).toEqual({ result: {} })
+})
+
+test('just do it with the gate already open passes through and the gate stays open', async ($, on) => {
+  stubEngine(on)
+  await start($)
+  await complete($, DRY_RUN)
+  await submit($, 'go')
+
+  expect(await submit($, 'just do it')).toEqual({ text: 'just do it' })
+  expect(await $.tool.call(EDIT_LOCKED)).toEqual({ result: {} })
 })
