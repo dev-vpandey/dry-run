@@ -1,4 +1,5 @@
 import type { Args, EngineInterface, Next, Register } from 'claude-code'
+import { namesLockedFile } from './bash-scan'
 import { isDryRun } from './dry-run-check'
 import { isLocked } from './gate-path'
 import { goWordKind } from './go-word'
@@ -78,6 +79,23 @@ async function mustDeny($: EngineInterface, path: unknown): Promise<boolean> {
 // Fail closed. If the guard threw before next, deny. If next already ran, replay it.
 const failClosed = (_$: EngineInterface, e: Args<'tool.call'>, next: Next<'tool.call'>) =>
   next.called ? next(e) : { deny: DENY_TEXT }
+
+// True when this Bash call must be denied. Throws when the call has no command.
+// A call with `isReadOnly` set is a read, so it is never denied.
+async function mustDenyBash($: EngineInterface, e: Args<'tool.check'>): Promise<boolean> {
+  if ((await isOff($)) || e.isReadOnly === true) {
+    return false
+  }
+  const input = e.input as Record<string, unknown> | undefined
+  if (!namesLockedFile(input?.command, await homeDir($))) {
+    return false
+  }
+  return !(await isOpen($))
+}
+
+// Fail closed for tool.check: same rule as failClosed above.
+const failClosedCheck = (_$: EngineInterface, e: Args<'tool.check'>, next: Next<'tool.check'>) =>
+  next.called ? next(e) : { decision: 'deny' as const, reason: DENY_TEXT }
 
 async function registerStopCommand($: EngineInterface): Promise<void> {
   const description = 'Lock the gate again. Edits to code files need a new /go.'
@@ -164,6 +182,11 @@ export const register: Register = on => {
       return (await mustDeny($, path)) ? { deny: DENY_TEXT } : next(e)
     }).catch(failClosed)
   }
+
+  // Bash may write a file. Deny when it names a locked file and is not read-only.
+  on('tool.check', { tool: 'Bash' }, async ($, e, next) => {
+    return (await mustDenyBash($, e)) ? { decision: 'deny', reason: DENY_TEXT } : next(e)
+  }).catch(failClosedCheck)
 
   // A dry run posted by the main thread locks the gate and waits for a go.
   // Lock first, then next(e): if next throws, the gate is already locked.

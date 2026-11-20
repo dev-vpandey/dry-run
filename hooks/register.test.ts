@@ -36,6 +36,7 @@ function stubEngine(on: any, stubs: Stubs = {}) {
   })
   on('env.get', (_: unknown, e: { name: string }) => ({ value: e.name === 'HOME' ? (stubs.home ?? '/Users/me') : undefined }))
   on('tool.call', () => ({ result: {} }))
+  on('tool.check', () => ({ decision: 'allow', reason: 'stub' }))
   on('prompt.submit', (_: unknown, e: { text: string }) => ({ text: e.text }))
   on('turn.complete', (_: unknown, e: { answer: string }) => ({ text: e.answer }))
   return { toasts, registered }
@@ -324,4 +325,51 @@ test('just do it with the gate already open passes through and the gate stays op
 
   expect(await submit($, 'just do it')).toEqual({ text: 'just do it' })
   expect(await $.tool.call(EDIT_LOCKED)).toEqual({ result: {} })
+})
+
+// ---- Bash deny (ticket 23) ----
+
+const BASH_WRITE = { tool: 'Bash', input: { command: 'echo x > src/foo.py' } } as const
+const BASH_SAFE = { tool: 'Bash', input: { command: 'pytest tests/' } } as const
+
+test('Bash: a command that writes a locked file is denied with the deny text', async ($, on) => {
+  stubEngine(on)
+  await start($)
+
+  expect(await $.tool.check(BASH_WRITE as never)).toEqual({ decision: 'deny', reason: DENY_TEXT })
+  expect((await $.tool.check(BASH_SAFE as never)).decision).toBe('allow')
+})
+
+test('Bash: a read-only command that names a locked file is allowed', async ($, on) => {
+  stubEngine(on)
+  await start($)
+
+  const read = { tool: 'Bash', input: { command: 'cat src/foo.py' }, isReadOnly: true }
+  expect((await $.tool.check(read as never)).decision).toBe('allow')
+})
+
+test('Bash: after /go the write is allowed, after /stop it is denied again', async ($, on) => {
+  stubEngine(on)
+  await start($)
+  await run($, 'go')
+  expect((await $.tool.check(BASH_WRITE as never)).decision).toBe('allow')
+
+  await run($, 'stop')
+  expect((await $.tool.check(BASH_WRITE as never)).decision).toBe('deny')
+})
+
+test('Bash: when the mod is off, a write is allowed', async ($, on) => {
+  stubEngine(on, { version: '2.1.200' })
+  await start($)
+
+  expect((await $.tool.check(BASH_WRITE as never)).decision).toBe('allow')
+})
+
+test('fail closed: a Bash call with no command is denied, even with the gate open', async ($, on) => {
+  stubEngine(on)
+  await start($)
+  expect(await $.tool.check({ tool: 'Bash', input: {} } as never)).toEqual({ decision: 'deny', reason: DENY_TEXT })
+
+  await run($, 'go')
+  expect(await $.tool.check({ tool: 'Bash', input: {} } as never)).toEqual({ decision: 'deny', reason: DENY_TEXT })
 })
