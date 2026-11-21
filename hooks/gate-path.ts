@@ -30,7 +30,7 @@ const SCRATCHPAD = 'scratchpad'
 
 // Splits a path into folder names. Drops "" and ".". Resolves "..".
 // A ".." with nothing to remove stays, so "../x.py" keeps its "..".
-function splitPath(path: string): string[] {
+export function splitPath(path: string): string[] {
   const parts = path.split('\\').join('/').split('/')
   const names: string[] = []
   for (const part of parts) {

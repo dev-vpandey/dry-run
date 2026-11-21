@@ -90,3 +90,20 @@ export function namesLockedFile(command: unknown, home: string = ''): boolean {
   }
   return false
 }
+
+// True when any word of the command is the switch file. `isSwitchWord` is the
+// path check, so this file needs no git root. A runner gets no pass here: the
+// switch file is locked for every kind of command. Throws when there is no command.
+export function namesSwitchFile(command: unknown, isSwitchWord: (word: string) => boolean): boolean {
+  if (typeof command !== 'string' || command.trim() === '') {
+    throw new Error('gate: no command in the Bash call')
+  }
+  for (const part of splitParts(command)) {
+    for (const word of splitWords(part)) {
+      if (isSwitchWord(word)) {
+        return true
+      }
+    }
+  }
+  return false
+}

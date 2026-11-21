@@ -6,6 +6,9 @@ declare module 'claude-code' {
       isRegistered: boolean
       isWaiting: boolean
       isSkipped: boolean
+      isSessionSet: boolean
+      cwd: string
+      gitRoot: string
     }
   }
 }
