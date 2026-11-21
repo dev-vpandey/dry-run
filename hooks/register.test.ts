@@ -14,7 +14,7 @@ function run($: any, command: string) {
 const EDIT_LOCKED = { tool: 'Edit', file_path: 'src/Foo.py', old_string: 'a', new_string: 'b' } as const
 const EDIT_FREE = { tool: 'Edit', file_path: 'README.md', old_string: 'a', new_string: 'b' } as const
 
-type Stubs = { version?: string; refuseCommand?: string; home?: string; gitRoot?: string }
+type Stubs = { version?: string; refuseCommand?: string; home?: string; gitRoot?: string; existsThrows?: boolean }
 
 // Each hook here stands for the engine, beneath the mod.
 // The mod forwards each of these events with next(e), so each needs a stub.
@@ -39,9 +39,12 @@ function stubEngine(on: any, stubs: Stubs = {}) {
   on('classic.SessionStart', () => ({}))
   on('session.compact', (_: unknown, e: { messages: unknown[] }) => ({ messages: e.messages }))
   // The folder that holds `.git`. Only this one exists, so the walk finds it.
-  on('fs.exists', (_: unknown, e: { path: string }) => ({
-    value: stubs.gitRoot !== undefined && e.path === stubs.gitRoot + '/.git',
-  }))
+  on('fs.exists', (_: unknown, e: { path: string }) => {
+    if (stubs.existsThrows) {
+      return { deny: 'disk error' }
+    }
+    return { value: stubs.gitRoot !== undefined && e.path === stubs.gitRoot + '/.git' }
+  })
   on('tool.call', () => ({ result: {} }))
   on('tool.check', () => ({ decision: 'allow', reason: 'stub' }))
   on('prompt.submit', (_: unknown, e: { text: string }) => ({ text: e.text }))
@@ -571,10 +574,26 @@ test('switch file: with no git root there is no switch file', async ($, on) => {
   expect(await $.tool.call(SWITCH as never)).toEqual({ result: {} })
 })
 
-test('fail closed: a broken event is denied under /dry-run off only for the switch file', async ($, on) => {
+test('fail closed: under /dry-run off a call with no path or no command is still denied', async ($, on) => {
   await startInRepo($, on)
   await dryRun($, 'off')
 
-  expect(await $.tool.call({ tool: 'Edit', old_string: 'a', new_string: 'b' } as never)).toEqual({ result: {} })
-  expect((await $.tool.check({ tool: 'Bash', input: {} } as never)).decision).toBe('allow')
+  expect(await $.tool.call({ tool: 'Edit', old_string: 'a', new_string: 'b' } as never)).toEqual({ deny: DENY_TEXT })
+  const noCommand = await $.tool.check({ tool: 'Bash', input: {} } as never)
+  expect(noCommand).toEqual({ decision: 'deny', reason: DENY_TEXT })
+})
+
+test('fail closed: when the git root lookup fails, any path ending in .claude/dry-run.json is locked', async ($, on) => {
+  stubEngine(on, { existsThrows: true })
+  await start($, '/repo/src')
+
+  expect(await $.tool.call(SWITCH as never)).toEqual({ deny: DENY_TEXT })
+  expect((await $.tool.check(BASH_SWITCH as never)).decision).toBe('deny')
+  expect(await $.tool.call(EDIT_FREE)).toEqual({ result: {} })
+})
+
+test('fail closed: before any session.start the switch file is locked by its ending', async ($, on) => {
+  stubEngine(on)
+
+  expect(await $.tool.call(SWITCH as never)).toEqual({ deny: DENY_TEXT })
 })

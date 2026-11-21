@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { candidateRoots, isSwitchFile } from './switch-file'
+import { candidateRoots, isSwitchFile, UNKNOWN_ROOT } from './switch-file'
 
 const ROOT = '/repo'
 const CWD = '/repo/src'
@@ -50,4 +50,12 @@ test('candidate roots: the working folder, then each parent up to /', () => {
   expect(candidateRoots('/repo/src/deep')).toEqual(['/repo/src/deep', '/repo/src', '/repo', '/'])
   expect(candidateRoots('/')).toEqual(['/'])
   expect(candidateRoots('/repo/')).toEqual(['/repo', '/'])
+})
+
+test('when the git root is unknown, any path ending in .claude/dry-run.json is the switch file', () => {
+  expect(isSwitchFile('/anywhere/.claude/dry-run.json', CWD, UNKNOWN_ROOT)).toBe(true)
+  expect(isSwitchFile('.claude/dry-run.json', CWD, UNKNOWN_ROOT)).toBe(true)
+  expect(isSwitchFile('/anywhere/.CLAUDE/Dry-Run.json', CWD, UNKNOWN_ROOT)).toBe(true)
+  expect(isSwitchFile('/anywhere/.claude/other.json', CWD, UNKNOWN_ROOT)).toBe(false)
+  expect(isSwitchFile('/anywhere/dry-run.json', CWD, UNKNOWN_ROOT)).toBe(false)
 })

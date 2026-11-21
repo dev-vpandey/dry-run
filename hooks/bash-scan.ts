@@ -77,13 +77,18 @@ function partNamesLocked(part: string, home: string): boolean {
   return false
 }
 
-// True when the command names a locked file. Throws when there is no command.
-// `home` is the user's home folder, "" when unknown.
-export function namesLockedFile(command: unknown, home: string = ''): boolean {
+// The command text. Throws when the call has no command.
+function requireCommand(command: unknown): string {
   if (typeof command !== 'string' || command.trim() === '') {
     throw new Error('gate: no command in the Bash call')
   }
-  for (const part of splitParts(command)) {
+  return command
+}
+
+// True when the command names a locked file. Throws when there is no command.
+// `home` is the user's home folder, "" when unknown.
+export function namesLockedFile(command: unknown, home: string = ''): boolean {
+  for (const part of splitParts(requireCommand(command))) {
     if (partNamesLocked(part, home)) {
       return true
     }
@@ -95,10 +100,8 @@ export function namesLockedFile(command: unknown, home: string = ''): boolean {
 // path check, so this file needs no git root. A runner gets no pass here: the
 // switch file is locked for every kind of command. Throws when there is no command.
 export function namesSwitchFile(command: unknown, isSwitchWord: (word: string) => boolean): boolean {
-  if (typeof command !== 'string' || command.trim() === '') {
-    throw new Error('gate: no command in the Bash call')
-  }
-  for (const part of splitParts(command)) {
+  const text = requireCommand(command)
+  for (const part of splitParts(text)) {
     for (const word of splitWords(part)) {
       if (isSwitchWord(word)) {
         return true

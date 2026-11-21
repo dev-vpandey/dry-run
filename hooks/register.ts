@@ -3,7 +3,7 @@ import { namesLockedFile, namesSwitchFile } from './bash-scan'
 import { isDryRun } from './dry-run-check'
 import { isLocked } from './gate-path'
 import { goWordKind } from './go-word'
-import { candidateRoots, isSwitchFile } from './switch-file'
+import { candidateRoots, isSwitchFile, UNKNOWN_ROOT } from './switch-file'
 import { isOlderThan } from './version'
 
 // The version floor. ci.yml names the same version; a test checks they match.
@@ -66,12 +66,21 @@ async function cwdOf($: EngineInterface): Promise<string> {
   return typeof read.value === 'string' ? read.value : ''
 }
 
+// A git root never written reads as unknown, so the switch file stays locked.
 async function gitRootOf($: EngineInterface): Promise<string> {
   const read = await $.state.get(GIT_ROOT)
-  return typeof read.value === 'string' ? read.value : ''
+  return typeof read.value === 'string' ? read.value : UNKNOWN_ROOT
 }
 
-// The first folder, from the working folder up, that holds a `.git` entry. "" when none.
+// A test for one path or word: is it the switch file of this session's repo?
+async function switchFileCheck($: EngineInterface): Promise<(word: unknown) => boolean> {
+  const cwd = await cwdOf($)
+  const gitRoot = await gitRootOf($)
+  return word => isSwitchFile(word, cwd, gitRoot)
+}
+
+// The first folder, from the working folder up, that holds a `.git` entry.
+// "" when there is none. UNKNOWN_ROOT when the lookup itself failed.
 async function findGitRoot($: EngineInterface, cwd: string): Promise<string> {
   try {
     for (const folder of candidateRoots(cwd)) {
@@ -81,7 +90,8 @@ async function findGitRoot($: EngineInterface, cwd: string): Promise<string> {
       }
     }
   } catch {
-    // A failed lookup must not stop the session start. No root means no switch file.
+    // A failed lookup must not stop the session start, and must not free the switch file.
+    return UNKNOWN_ROOT
   }
   return ''
 }
@@ -105,15 +115,15 @@ async function homeDir($: EngineInterface): Promise<string> {
 
 // True when this edit must be denied. Throws when the tool call has no path.
 // The switch file is locked in every mode, so /dry-run off does not free it.
+// A bad path throws even when the mod is off: fail closed.
 async function mustDeny($: EngineInterface, path: unknown): Promise<boolean> {
-  const isSwitch = isSwitchFile(path, await cwdOf($), await gitRootOf($))
-  if (!isSwitch) {
-    if (await isOff($)) {
-      return false
-    }
-    if (!isLocked(path, await homeDir($))) {
-      return false
-    }
+  const isSwitch = (await switchFileCheck($))(path)
+  const isLockedFile = isLocked(path, await homeDir($))
+  if (isSwitch) {
+    return !(await isOpen($))
+  }
+  if ((await isOff($)) || !isLockedFile) {
+    return false
   }
   return !(await isOpen($))
 }
@@ -130,16 +140,14 @@ async function mustDenyBash($: EngineInterface, e: Args<'tool.check'>): Promise<
   }
   const input = e.input as Record<string, unknown> | undefined
   const command = input?.command
-  const cwd = await cwdOf($)
-  const gitRoot = await gitRootOf($)
-  const isSwitchWord = (word: string) => isSwitchFile(word, cwd, gitRoot)
-  if (await isOff($)) {
-    // Off frees code files. The switch file stays locked. A broken call is not ours to judge.
-    const isHit = typeof command === 'string' && command.trim() !== '' && namesSwitchFile(command, isSwitchWord)
-    return isHit && !(await isOpen($))
+  // The switch file is locked in every mode. No command throws, even when off.
+  if (namesSwitchFile(command, await switchFileCheck($))) {
+    return !(await isOpen($))
   }
-  const isHit = namesSwitchFile(command, isSwitchWord) || namesLockedFile(command, await homeDir($))
-  return isHit && !(await isOpen($))
+  if (await isOff($)) {
+    return false
+  }
+  return namesLockedFile(command, await homeDir($)) && !(await isOpen($))
 }
 
 // Fail closed for tool.check: same rule as failClosed above.
@@ -242,6 +250,13 @@ function isMainLoop(e: object): boolean {
   return (e as Record<string, unknown>).agentId === undefined
 }
 
+// Locks the gate when the event has `field` equal to `value`. Used for "clear".
+async function lockWhen($: EngineInterface, e: object, field: string, value: string): Promise<void> {
+  if ((e as Record<string, unknown>)[field] === value) {
+    await lockGate($)
+  }
+}
+
 async function lockGate($: EngineInterface) {
   await $.state.set(IS_OPEN, false)
   await $.state.set(IS_WAITING, false)
@@ -259,15 +274,11 @@ export const register: Register = on => {
   // The classic SessionStart with source "clear" is the second signal. Either one
   // locks the gate. /dry-run off stays: it holds for the whole session.
   on('session.end', async ($, e, next) => {
-    if ((e as Record<string, unknown>).reason === 'clear') {
-      await lockGate($)
-    }
+    await lockWhen($, e, 'reason', 'clear')
     return next(e)
   })
   on('classic.SessionStart', async ($, e, next) => {
-    if ((e as Record<string, unknown>).source === 'clear') {
-      await lockGate($)
-    }
+    await lockWhen($, e, 'source', 'clear')
     return next(e)
   })
 
