@@ -1,8 +1,9 @@
 import type { Args, EngineInterface, Next, Register } from 'claude-code'
-import { namesLockedFile } from './bash-scan'
+import { namesLockedFile, namesSwitchFile } from './bash-scan'
 import { isDryRun } from './dry-run-check'
 import { isLocked } from './gate-path'
 import { goWordKind } from './go-word'
+import { candidateRoots, isSwitchFile, UNKNOWN_ROOT } from './switch-file'
 import { isOlderThan } from './version'
 
 // The version floor. ci.yml names the same version; a test checks they match.
@@ -21,7 +22,14 @@ const IS_WAITING = { plugin: 'dry-run', key: 'isWaiting' } as const
 // The gate was opened by "just do it" with no dry run. The pane shows "skipped".
 const IS_SKIPPED = { plugin: 'dry-run', key: 'isSkipped' } as const
 
+// The person ran /dry-run on or off this session. Without it the source is "default".
+const IS_SESSION_SET = { plugin: 'dry-run', key: 'isSessionSet' } as const
+// The working folder of the session, and the git root found from it ("" when none).
+const CWD = { plugin: 'dry-run', key: 'cwd' } as const
+const GIT_ROOT = { plugin: 'dry-run', key: 'gitRoot' } as const
+
 const GO_NAME = 'go'
+const DRY_RUN_NAME = 'dry-run'
 const STOP_NAME = 'stop'
 const STOP_FALLBACK_NAME = 'hold'
 
@@ -48,6 +56,46 @@ async function isWaiting($: EngineInterface): Promise<boolean> {
   return read.value === true
 }
 
+async function isSessionSet($: EngineInterface): Promise<boolean> {
+  const read = await $.state.get(IS_SESSION_SET)
+  return read.value === true
+}
+
+async function cwdOf($: EngineInterface): Promise<string> {
+  const read = await $.state.get(CWD)
+  return typeof read.value === 'string' ? read.value : ''
+}
+
+// A git root never written reads as unknown, so the switch file stays locked.
+async function gitRootOf($: EngineInterface): Promise<string> {
+  const read = await $.state.get(GIT_ROOT)
+  return typeof read.value === 'string' ? read.value : UNKNOWN_ROOT
+}
+
+// A test for one path or word: is it the switch file of this session's repo?
+async function switchFileCheck($: EngineInterface): Promise<(word: unknown) => boolean> {
+  const cwd = await cwdOf($)
+  const gitRoot = await gitRootOf($)
+  return word => isSwitchFile(word, cwd, gitRoot)
+}
+
+// The first folder, from the working folder up, that holds a `.git` entry.
+// "" when there is none. UNKNOWN_ROOT when the lookup itself failed.
+async function findGitRoot($: EngineInterface, cwd: string): Promise<string> {
+  try {
+    for (const folder of candidateRoots(cwd)) {
+      const prefix = folder === '/' ? '' : folder
+      if (await $.fs.exists(prefix + '/.git')) {
+        return folder
+      }
+    }
+  } catch {
+    // A failed lookup must not stop the session start, and must not free the switch file.
+    return UNKNOWN_ROOT
+  }
+  return ''
+}
+
 // The edit tools the gate guards, and the field that holds each one's path.
 const GUARDED_TOOLS = [
   { tool: 'Edit', pathField: 'file_path' },
@@ -66,11 +114,15 @@ async function homeDir($: EngineInterface): Promise<string> {
 }
 
 // True when this edit must be denied. Throws when the tool call has no path.
+// The switch file is locked in every mode, so /dry-run off does not free it.
+// A bad path throws even when the mod is off: fail closed.
 async function mustDeny($: EngineInterface, path: unknown): Promise<boolean> {
-  if (await isOff($)) {
-    return false
+  const isSwitch = (await switchFileCheck($))(path)
+  const isLockedFile = isLocked(path, await homeDir($))
+  if (isSwitch) {
+    return !(await isOpen($))
   }
-  if (!isLocked(path, await homeDir($))) {
+  if ((await isOff($)) || !isLockedFile) {
     return false
   }
   return !(await isOpen($))
@@ -83,14 +135,19 @@ const failClosed = (_$: EngineInterface, e: Args<'tool.call'>, next: Next<'tool.
 // True when this Bash call must be denied. Throws when the call has no command.
 // A call with `isReadOnly` set is a read, so it is never denied.
 async function mustDenyBash($: EngineInterface, e: Args<'tool.check'>): Promise<boolean> {
-  if ((await isOff($)) || e.isReadOnly === true) {
+  if (e.isReadOnly === true) {
     return false
   }
   const input = e.input as Record<string, unknown> | undefined
-  if (!namesLockedFile(input?.command, await homeDir($))) {
+  const command = input?.command
+  // The switch file is locked in every mode. No command throws, even when off.
+  if (namesSwitchFile(command, await switchFileCheck($))) {
+    return !(await isOpen($))
+  }
+  if (await isOff($)) {
     return false
   }
-  return !(await isOpen($))
+  return namesLockedFile(command, await homeDir($)) && !(await isOpen($))
 }
 
 // Fail closed for tool.check: same rule as failClosed above.
@@ -107,8 +164,11 @@ async function registerStopCommand($: EngineInterface): Promise<void> {
   }
 }
 
-async function startSession($: EngineInterface): Promise<void> {
+async function startSession($: EngineInterface, cwd: string): Promise<void> {
   await $.state.set(IS_OPEN, false)
+  await $.state.set(IS_SESSION_SET, false)
+  await $.state.set(CWD, cwd)
+  await $.state.set(GIT_ROOT, await findGitRoot($, cwd))
   await $.state.set(IS_WAITING, false)
   await $.state.set(IS_SKIPPED, false)
   const engine = await $.session.version()
@@ -128,6 +188,7 @@ async function registerCommands($: EngineInterface): Promise<void> {
   }
   await $.command.register({ name: GO_NAME, description: 'Approve the dry run. Edits open.' })
   await registerStopCommand($)
+  await $.command.register({ name: DRY_RUN_NAME, description: 'Show, or set, the dry-run mod: on or off.' })
   await $.state.set(IS_REGISTERED, true)
 }
 
@@ -137,6 +198,32 @@ async function openGate($: EngineInterface, isSkipped: boolean): Promise<void> {
   await $.state.set(IS_OPEN, true)
   await $.state.set(IS_WAITING, false)
   await $.state.set(IS_SKIPPED, isSkipped)
+}
+
+// The text /dry-run shows: on or off, where that came from, and the gate.
+async function statusText($: EngineInterface): Promise<string> {
+  const source = (await isSessionSet($)) ? 'session' : 'default'
+  if (await isOff($)) {
+    return `dry-run mod: off (source: ${source}).`
+  }
+  const gate = (await isOpen($)) ? 'open' : 'locked'
+  return `dry-run mod: on (source: ${source}). Gate ${gate}.`
+}
+
+// /dry-run, /dry-run on and /dry-run off. Anything else shows the usage.
+async function runDryRunCommand($: EngineInterface, args: string): Promise<{ text: string }> {
+  const word = args.trim().toLowerCase()
+  if (word === 'off') {
+    await $.state.set(IS_OFF, true)
+    await $.state.set(IS_SESSION_SET, true)
+  } else if (word === 'on') {
+    await $.state.set(IS_OFF, false)
+    await $.state.set(IS_SESSION_SET, true)
+    await lockGate($)
+  } else if (word !== '') {
+    return { text: 'Use /dry-run, /dry-run on or /dry-run off.' }
+  }
+  return { text: await statusText($) }
 }
 
 // A new dry run locks the gate and waits for the next go.
@@ -163,6 +250,13 @@ function isMainLoop(e: object): boolean {
   return (e as Record<string, unknown>).agentId === undefined
 }
 
+// Locks the gate when the event has `field` equal to `value`. Used for "clear".
+async function lockWhen($: EngineInterface, e: object, field: string, value: string): Promise<void> {
+  if ((e as Record<string, unknown>)[field] === value) {
+    await lockGate($)
+  }
+}
+
 async function lockGate($: EngineInterface) {
   await $.state.set(IS_OPEN, false)
   await $.state.set(IS_WAITING, false)
@@ -172,7 +266,19 @@ async function lockGate($: EngineInterface) {
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
-    await startSession($)
+    await startSession($, e.cwd)
+    return next(e)
+  })
+
+  // A real /clear raises session.end with reason "clear", and no session.start.
+  // The classic SessionStart with source "clear" is the second signal. Either one
+  // locks the gate. /dry-run off stays: it holds for the whole session.
+  on('session.end', async ($, e, next) => {
+    await lockWhen($, e, 'reason', 'clear')
+    return next(e)
+  })
+  on('classic.SessionStart', async ($, e, next) => {
+    await lockWhen($, e, 'source', 'clear')
     return next(e)
   })
 
@@ -225,6 +331,8 @@ export const register: Register = on => {
     await openGate($, false)
     return { text: '✓ Gate open. Edits allowed for this dry run.' }
   })
+
+  on('command.run', { command: DRY_RUN_NAME }, ($, e) => runDryRunCommand($, e.args))
 
   for (const name of [STOP_NAME, STOP_FALLBACK_NAME]) {
     on('command.run', { command: name }, $ => lockGate($))

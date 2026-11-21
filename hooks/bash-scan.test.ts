@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { namesLockedFile } from './bash-scan'
+import { namesLockedFile, namesSwitchFile } from './bash-scan'
 
 const HOME = '/Users/me'
 
@@ -76,4 +76,33 @@ test('bad input throws, so the hook fails closed', () => {
   expect(() => namesLockedFile(undefined, HOME)).toThrow()
   expect(() => namesLockedFile('', HOME)).toThrow()
   expect(() => namesLockedFile(42, HOME)).toThrow()
+})
+
+// ---- the switch file in a Bash command (ticket 24) ----
+
+const isSwitchWord = (word: string) => word === '/repo/.claude/dry-run.json'
+
+test('a Bash command that names the switch file is caught, runners included', () => {
+  expect(namesSwitchFile('echo {} > /repo/.claude/dry-run.json', isSwitchWord)).toBe(true)
+  expect(namesSwitchFile('python /repo/.claude/dry-run.json', isSwitchWord)).toBe(true)
+  expect(namesSwitchFile('cp a.json "/repo/.claude/dry-run.json"', isSwitchWord)).toBe(true)
+  expect(namesSwitchFile('pytest && sed -i x /repo/.claude/dry-run.json', isSwitchWord)).toBe(true)
+  expect(namesSwitchFile('echo x > notes.md', isSwitchWord)).toBe(false)
+})
+
+test('a switch file scan with no command throws', () => {
+  expect(() => namesSwitchFile(undefined, isSwitchWord)).toThrow()
+  expect(() => namesSwitchFile('', isSwitchWord)).toThrow()
+})
+
+test('gap: cd into the folder, then a bare name, is not caught', () => {
+  expect(namesSwitchFile('cd /repo/.claude && echo {} > dry-run.json', isSwitchWord)).toBe(false)
+})
+
+test('gap: a symlink to the switch file is not caught', () => {
+  expect(namesSwitchFile('echo {} > link.json', isSwitchWord)).toBe(false)
+})
+
+test('gap: a glob that expands to the switch file is not caught', () => {
+  expect(namesSwitchFile('echo {} > /repo/.claude/dry-*.json', isSwitchWord)).toBe(false)
 })
