@@ -60,7 +60,7 @@ const DRY_RUN = [
 
 const EXPLAINER = ['### 8. Language explainer', '| Construct | Java |', '|---|---|', '| set | HashSet |', 'Flow: a, b, a gives a, b.'].join('\n')
 
-type Seed = { folded?: string; isOpen?: boolean; isWaiting?: boolean; isSkipped?: boolean; isOff?: boolean; isSoft?: boolean; text?: string; repoFile?: string }
+type Seed = { isNamesMissing?: boolean; folded?: string; isOpen?: boolean; isWaiting?: boolean; isSkipped?: boolean; isOff?: boolean; isSoft?: boolean; text?: string; repoFile?: string }
 
 // The state the engine holds, by key. A key not seeded reads as never written.
 function seedState(on: On, seed: Seed, writes: string[] = []) {
@@ -86,7 +86,12 @@ function seedState(on: On, seed: Seed, writes: string[] = []) {
     version += 1
     return { value: { isSet: true, version } }
   })
-  on('fs.read', () => ({ value: NAMES_FILE }))
+  on('fs.read', () => {
+    if (seed.isNamesMissing === true) {
+      throw new Error('no such file')
+    }
+    return { value: NAMES_FILE }
+  })
   on('ui.toast', () => ({ value: undefined }))
   on('ui.status', () => ({ value: undefined }))
 }
@@ -138,7 +143,14 @@ test('the pane has Go when a dry run waits, and Go opens the gate', async ($, on
   expect(writes).toContain('isWaiting=false')
 })
 
-test('with nothing waiting, Go is dimmed and says it needs a dry run', async ($, on) => {
+test('boxes with no text yet say they wait for the dry run', async ($, on) => {
+  seedState(on, {})
+
+  const all = await paneTexts($, 'terminal')
+  expect(all.split('waiting for dry run').length - 1).toBe(7)
+})
+
+test('with nothing waiting, Go says it needs a dry run', async ($, on) => {
   seedState(on, {})
 
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
@@ -191,6 +203,26 @@ test('the band shows an open gate', async ($, on) => {
   await ui.unmount()
 
   expect(all).toContain('✓ GATE OPEN')
+})
+
+test('the band is left to the engine in VS Code', async ($, on) => {
+  seedState(on, { text: DRY_RUN })
+  on('ui.render', ($, e) => {
+    const { Text } = $.ui.resolve(e)
+    return <Text>engine</Text>
+  })
+
+  const ui = await $.ui.mount({ ...BAND, surface: 'vscode' })
+  expect((await ui.find({ type: 'Text', text: /engine/ }))?.text).toBe('engine')
+  await ui.unmount()
+})
+
+test('without a names file the pane still draws and calls no name off the list', async ($, on) => {
+  seedState(on, { text: DRY_RUN, isNamesMissing: true })
+
+  const all = await paneTexts($, 'terminal')
+  expect(all).toContain('Bloom filter')
+  expect(all).not.toContain('not on list')
 })
 
 test('the band is left to the engine while off', async ($, on) => {
@@ -338,4 +370,20 @@ test('fold all says unfold all when every box is folded', async ($, on) => {
   await ui.unmount()
 
   expect(button?.props.label).toBe('unfold all')
+})
+
+test('the focus ring never lands on a box title, but lands on Go', async ($, on) => {
+  const landed: (string | undefined)[] = []
+  on('ui.focus', (_: unknown, e: { element?: string }) => {
+    landed.push(e.element)
+    return {}
+  })
+  seedState(on, { text: DRY_RUN, isWaiting: true })
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await $.ui.focus({ component: 'Pane', requestId: 'design-card', element: 'fold-Goal', origin: { kind: 'person' } })
+  await $.ui.focus({ component: 'Pane', requestId: 'design-card', element: 'go', origin: { kind: 'person' } })
+  await ui.unmount()
+
+  expect(landed).toEqual(['go'])
 })

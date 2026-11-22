@@ -35,9 +35,11 @@ const SECTIONS: readonly { name: SectionName; heading: string }[] = [
 
 // The explainer is required only for a reader language and another language in the change
 // table (dry-run-check.ts). The count, the band and the status line leave it out.
-const OPTIONAL: SectionName = 'Language explainer'
-const REQUIRED = SECTIONS.filter(section => section.name !== OPTIONAL)
-export const SECTION_TOTAL = REQUIRED.length
+export const EXPLAINER_SECTION: SectionName = 'Language explainer'
+export const SECTION_TOTAL = SECTIONS.length - 1
+
+// The box names in dry-run order.
+export const SECTION_NAMES: readonly SectionName[] = SECTIONS.map(section => section.name)
 
 const CHOSEN = '**Chosen:**'
 const GOAL = '**Goal:**'
@@ -82,7 +84,7 @@ export function namesOf(text: string): Names {
   return names
 }
 
-function listOf(text: string): string[] {
+export function listOf(text: string): string[] {
   return text
     .split(',')
     .map(item => item.trim())
@@ -164,48 +166,54 @@ function plain(line: string): string {
   return line.replace(/^([-*•]|\d+[.)])\s+/, '').split('**').join('').trim()
 }
 
-// The text after "label:" on the first line that starts with that label, or "".
-function labelled(body: string[], label: string): string {
-  for (const line of body) {
-    const text = plain(line)
-    if (text.toLowerCase().startsWith(`${label}:`)) {
-      return text.slice(label.length + 1).trim()
-    }
-  }
-  return ''
-}
-
 // The worked example: "Input:", "Old:" and "New:" lines, or one line "input → old → new".
 function exampleOf(body: string[]): Example {
   const parts = body.map(line => plain(line).split('→').map(part => part.trim())).find(list => list.length >= 3)
   const fromArrows = parts ?? ['', '', '']
   return {
-    input: labelled(body, 'input') || (fromArrows[0] ?? ''),
-    old: labelled(body, 'old') || (fromArrows[1] ?? ''),
-    now: labelled(body, 'new') || fromArrows.slice(2).join(' → '),
+    input: valueAfter(body, 'input:', true) || (fromArrows[0] ?? ''),
+    old: valueAfter(body, 'old:', true) || (fromArrows[1] ?? ''),
+    now: valueAfter(body, 'new:', true) || fromArrows.slice(2).join(' → '),
   }
 }
 
-// The option the "My pick: 1" or "Pick: A" line names, as an index, or -1.
+// The labels of the options. Two at most, as the format says.
+export const DECISION_LABELS = ['A', 'B'] as const
+
+function isPickLine(line: string): boolean {
+  return /^(my )?pick\b/i.test(plain(line))
+}
+
+// The option the "My pick: 1" or "Pick: A" line names, as an index, or -1 when it names none.
 function pickIndexOf(body: string[]): number {
+  const line = body.find(isPickLine)
+  const after = line === undefined ? '' : (plain(line).toLowerCase().split('pick:')[1] ?? '')
+  // A lone digit or letter names an option. A word or a sentence does not.
+  const token = after.replace('option', '').trim().split(/[\s.,)]/)[0] ?? ''
+  if (!/^[a-z0-9]$/.test(token)) {
+    return -1
+  }
+  const index = /\d/.test(token) ? Number(token) - 1 : token.charCodeAt(0) - 'a'.charCodeAt(0)
+  return index < DECISION_LABELS.length ? index : -1
+}
+
+function isOptionLine(line: string): boolean {
+  return /^([-*•]|\d+[.)])\s+|^option\s+\w+\s*[:.)]/i.test(line) && !isPickLine(line)
+}
+
+// The options of the open decisions: numbered or bulleted lines, two at most. A line under an
+// option, that is not a pick line, is that option's context.
+function decisionsOf(body: string[]): Decision[] {
+  const texts: string[] = []
   for (const line of body) {
-    const words = plain(line).toLowerCase()
-    const at = words.indexOf('pick:')
-    if (at >= 0) {
-      const mark = words.slice(at + 'pick:'.length).trim().replace('option', '').trim().charAt(0)
-      return /\d/.test(mark) ? Number(mark) - 1 : mark.charCodeAt(0) - 'a'.charCodeAt(0)
+    if (isOptionLine(line)) {
+      texts.push(plain(line).replace(/^option\s+\w+\s*[:.)]\s*/i, ''))
+    } else if (texts.length > 0 && !isPickLine(line) && line.toLowerCase() !== 'none') {
+      texts[texts.length - 1] = `${texts[texts.length - 1]} ${plain(line)}`
     }
   }
-  return -1
-}
-
-// The options of the open decisions: numbered or bulleted lines, two at most.
-function decisionsOf(body: string[]): Decision[] {
   const pick = pickIndexOf(body)
-  return body
-    .filter(line => /^([-*•]|\d+[.)])\s+/.test(line))
-    .slice(0, 2)
-    .map((line, index) => ({ text: plain(line), isPick: index === pick }))
+  return texts.slice(0, DECISION_LABELS.length).map((text, index) => ({ text, isPick: index === pick }))
 }
 
 // The language explainer: a construct to equivalent table, then a "Flow:" line.
@@ -214,7 +222,7 @@ function explainerOf(body: string[]): Explainer {
     const cells = cellsOf(row)
     return { construct: cells[0] ?? '', java: cells[1] ?? '' }
   })
-  return { rows, flow: labelled(body, 'flow') }
+  return { rows, flow: valueAfter(body, 'flow:', true) }
 }
 
 // The first line after the "**Chosen:**" line that is not a Big-O or link line.
@@ -227,11 +235,14 @@ function whyOf(body: string[]): string {
   return ''
 }
 
-// The text after a prefix on the first line that starts with it, or "".
-function valueAfter(body: string[], prefix: string): string {
+// The text after a prefix on the first line that starts with it, or "". A loose match ignores
+// case, a list mark and bold marks: "- **Old:** x" matches "old:".
+function valueAfter(body: string[], prefix: string, isLoose = false): string {
   for (const line of body) {
-    if (line.startsWith(prefix)) {
-      return line.slice(prefix.length).trim()
+    const text = isLoose ? plain(line) : line
+    const starts = isLoose ? text.toLowerCase().startsWith(prefix.toLowerCase()) : text.startsWith(prefix)
+    if (starts) {
+      return text.slice(prefix.length).trim()
     }
   }
   return ''
@@ -323,22 +334,18 @@ export function repoUnlockLine(count: number): string {
 
 // How many required sections a dry run text fills. The names do not matter for a count.
 export function sectionCount(text: string): number {
-  return parseCard(text, null).done.filter(name => name !== OPTIONAL).length
+  return parseCard(text, null).done.filter(name => name !== EXPLAINER_SECTION).length
 }
 
 // The folded boxes are kept as their names joined with commas.
-export function foldedNames(text: string): string[] {
-  return listOf(text)
-}
-
 export function toggleFold(text: string, name: string): string {
-  const names = foldedNames(text)
+  const names = listOf(text)
   return (names.includes(name) ? names.filter(item => item !== name) : [...names, name]).join(',')
 }
 
 // Folds every shown box, or opens them all when they are all folded already.
 export function foldAll(text: string, shown: string[]): string {
-  const names = foldedNames(text)
+  const names = listOf(text)
   return shown.every(name => names.includes(name)) ? '' : shown.join(',')
 }
 

@@ -4,9 +4,9 @@
 
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, RenderChildren } from 'claude-code'
-import { tokensFor } from './design-card-colors'
+import { DARK } from './design-card-colors'
 import type { Tokens } from './design-card-colors'
-import { foldAll, foldedNames, namesOf, PANE_ID, parseCard, repoUnlockLine, SECTION_TOTAL, sectionCount, toggleFold, topFill, wrapWords } from './design-card'
+import { DECISION_LABELS, EXPLAINER_SECTION, foldAll, listOf, namesOf, PANE_ID, parseCard, repoUnlockLine, SECTION_NAMES, SECTION_TOTAL, sectionCount, toggleFold, topFill, wrapWords } from './design-card'
 import type { Card, Gate, Names, SectionName } from './design-card'
 import { emptyRepoFile, restoreRepoFile } from './repo-file'
 import { lockGate, openGate } from './register'
@@ -34,8 +34,7 @@ type View = {
   folded: string[]
 }
 
-// This build gives a mod no signal for the person's color mode. Dark until it does.
-const TOKENS = tokensFor(false)
+const TOKENS = DARK
 
 // A part of the gate pill: its words and colors. The words are the prototype's.
 function gateOf(view: View, t: Tokens): { label: string; color: string; bg: string } {
@@ -78,7 +77,7 @@ async function viewOf($: EngineInterface): Promise<View | null> {
     isSkipped: await read($, isSkipped),
     text: await read($, dryRunText),
     unlocked: file.unlock.length,
-    folded: foldedNames(await read($, foldedBoxes)),
+    folded: listOf(await read($, foldedBoxes)),
   }
 }
 
@@ -122,18 +121,6 @@ function levelColor(level: 'E' | 'M' | 'H', t: Tokens): string {
   return level === 'M' ? t.amber : t.red
 }
 
-// The boxes, in dry-run order.
-const SECTION_NAMES: readonly SectionName[] = [
-  'Goal',
-  'Change table',
-  'SOLID',
-  'Pattern',
-  'DSA',
-  'Worked example',
-  'Open decisions',
-  'Language explainer',
-]
-
 // The frame of a box is drawn here in text, not by the Box border: this renderer clips
 // anything laid over a border, and a Box has no title. So the title is part of the top line.
 // Every row is one line, so the right edge lines up: long text is wrapped by wrapWords.
@@ -149,9 +136,21 @@ function paneTree($: EngineInterface, els: Els, view: View, card: Card, width: n
     wrapWords(value, inner - prefix, inner).map(line => text(line, color))
   const dash = '—'
   // The boxes shown. The explainer is shown only when the dry run has it.
-  const shown = [...SECTION_NAMES].filter(name => name !== 'Language explainer' || card.done.includes(name))
+  const shown = SECTION_NAMES.filter(name => name !== EXPLAINER_SECTION || card.done.includes(name))
+  // A badge, then the text after it on the same line; the rest of the text wraps below it.
+  const badgeRows = (badge: RenderChildren, badgeWidth: number, value: string, color: string) => {
+    const [first = '', ...rest] = wrapWords(value, inner - badgeWidth, inner)
+    return [
+      <Box>
+        {badge}
+        {text(` ${first}`, color)}
+      </Box>,
+      ...rest.map(line => text(line, color)),
+    ]
+  }
   const section = (name: SectionName, color: string, rows: RenderChildren[]) => {
     const isFolded = view.folded.includes(name)
+    const body = card.done.includes(name) ? rows : [text('waiting for dry run', t.amber)]
     const title = ` ${isFolded ? '▸' : '▾'} ${name} `
     const edge = (left: string, right: string) => <Text color={color}>{`${left}${'─'.repeat(width - 2)}${right}`}</Text>
     return (
@@ -163,7 +162,7 @@ function paneTree($: EngineInterface, els: Els, view: View, card: Card, width: n
           </Button>
           <Text color={color}>{`${'─'.repeat(topFill(title, width))}╮`}</Text>
         </Box>
-        {(isFolded ? [text('…', color)] : rows).map(row => (
+        {(isFolded ? [text('…', color)] : body).map(row => (
           <Box>
             <Text color={color}>│ </Text>
             <Box width={inner}>{row}</Box>
@@ -177,16 +176,7 @@ function paneTree($: EngineInterface, els: Els, view: View, card: Card, width: n
   const nameRow = (name: string, color: string, bg: string) => (name === '' ? text(dash, t.fg) : pill(name, color, bg))
   const solid = card.solid.rows.length === 0
     ? wrapped(card.solid.note === '' ? dash : card.solid.note, t.fg)
-    : card.solid.rows.flatMap(row => {
-        const [first = '', ...rest] = wrapWords(row.why, inner - row.name.length - 3, inner)
-        return [
-          <Box>
-            {pill(row.name, t.term, t.claude)}
-            {text(` ${first}`, t.fg)}
-          </Box>,
-          ...rest.map(line => text(line, t.fg)),
-        ]
-      })
+    : card.solid.rows.flatMap(row => badgeRows(pill(row.name, t.term, t.claude), row.name.length + 3, row.why, t.fg))
   const changes = card.changes.length === 0
     ? [text(dash, t.fg)]
     : card.changes.flatMap(row => [
@@ -213,14 +203,8 @@ function paneTree($: EngineInterface, els: Els, view: View, card: Card, width: n
     ? [text(card.done.includes('Open decisions') ? 'none' : dash, t.fg)]
     : card.decisions.flatMap((decision, index) => {
         const mark = decision.isPick ? '★ pick' : '○'
-        const [first = '', ...rest] = wrapWords(`${'AB'.charAt(index)}. ${decision.text}`, inner - mark.length - 3, inner)
-        return [
-          <Box>
-            {decision.isPick ? pill(mark, t.amber, t.amberBg) : text(`${mark} `, t.fg)}
-            {text(` ${first}`, t.fg)}
-          </Box>,
-          ...rest.map(line => text(line, t.fg)),
-        ]
+        const badge = decision.isPick ? pill(mark, t.amber, t.amberBg) : text(mark, t.fg)
+        return badgeRows(badge, mark.length + 3, `${DECISION_LABELS[index] ?? ''}. ${decision.text}`, t.fg)
       })
   const explainer = [
     ...card.explainer.rows.map(row => (
@@ -290,7 +274,7 @@ function paneTree($: EngineInterface, els: Els, view: View, card: Card, width: n
       ])}
       {section('Worked example', t.fg, example)}
       {section('Open decisions', t.amber, decisions)}
-      {card.done.includes('Language explainer') && section('Language explainer', t.violet, explainer)}
+      {card.done.includes(EXPLAINER_SECTION) && section(EXPLAINER_SECTION, t.violet, explainer)}
       {view.unlocked > 0 && text(repoUnlockLine(view.unlocked), t.amber)}
     </Box>
   )

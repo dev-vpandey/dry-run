@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { foldAll, foldedNames, namesOf, parseCard, repoUnlockLine, sectionCount, statusLineText, toggleFold, topFill, wrapWords } from './design-card'
+import { foldAll, namesOf, parseCard, listOf, repoUnlockLine, sectionCount, statusLineText, toggleFold, topFill, wrapWords } from './design-card'
 
 // Written out here on purpose: the test must not share the mod's list.
 const NAMES = { patterns: ['Strategy', 'Observer'], dsa: ['Two pointers', 'Hash map / set lookup'] }
@@ -164,8 +164,8 @@ test('folding a box adds its name, folding it again removes it', async () => {
   expect(toggleFold('', 'Goal')).toBe('Goal')
   expect(toggleFold('Goal', 'DSA')).toBe('Goal,DSA')
   expect(toggleFold('Goal,DSA', 'Goal')).toBe('DSA')
-  expect(foldedNames('Goal,DSA')).toEqual(['Goal', 'DSA'])
-  expect(foldedNames('')).toEqual([])
+  expect(listOf('Goal,DSA')).toEqual(['Goal', 'DSA'])
+  expect(listOf('')).toEqual([])
 })
 
 test('fold all folds every shown box, and a second press opens them', async () => {
@@ -205,4 +205,38 @@ test('words wrap to the width, the first line to its own width', async () => {
   expect(wrapWords('one two three four', 8, 8)).toEqual(['one two', 'three', 'four'])
   expect(wrapWords('one two three', 5, 20)).toEqual(['one', 'two three'])
   expect(wrapWords('', 10, 10)).toEqual([''])
+})
+
+function decisionsOf(...lines: string[]) {
+  return parseCard(['### 7. Open decisions', ...lines].join('\n'), NAMES).decisions
+}
+
+test('a letter pick marks that option', async () => {
+  expect(decisionsOf('1. First.', '2. Second.', 'Pick: B').map(d => d.isPick)).toEqual([false, true])
+})
+
+test('a pick that is no number or letter marks no option', async () => {
+  expect(decisionsOf('1. First.', '2. Second.', 'Pick: none').map(d => d.isPick)).toEqual([false, false])
+  expect(decisionsOf('1. First.', '2. Second.', 'Pick:').map(d => d.isPick)).toEqual([false, false])
+  expect(decisionsOf('1. First.', '2. Second.', 'Pick: the first one').map(d => d.isPick)).toEqual([false, false])
+})
+
+test('a bulleted pick line is not an option', async () => {
+  expect(decisionsOf('1. Only option.', '- My pick: 1')).toEqual([{ text: 'Only option.', isPick: true }])
+})
+
+test('a line under an option is its context', async () => {
+  expect(decisionsOf('1. Keep it.', 'Go works anyway.', '2. Change it.')).toEqual([
+    { text: 'Keep it. Go works anyway.', isPick: false },
+    { text: 'Change it.', isPick: false },
+  ])
+})
+
+test('an option label in the text is not doubled', async () => {
+  expect(decisionsOf('Option A: Keep it.', 'Option B: Change it.')[0]?.text).toBe('Keep it.')
+})
+
+test('a LeetCode row with no known difficulty is not a row', async () => {
+  const text = ['### 5. DSA', '**Chosen:** x', 'Odd Problem · Unknown · https://leetcode.com/problems/odd/'].join('\n')
+  expect(parseCard(text, NAMES).dsa.rows).toEqual([])
 })

@@ -40,7 +40,7 @@ Use these headings, exactly as written, in this order. The mod finds a dry run b
 
 - **Order.** Sections 3 to 5 come after the change table and before the worked example. So the example shows the design working.
 - **No tiny mode.** Every required heading is always there. Use the shortest allowed form when a section has nothing to say.
-- **Change table.** The first column is the file path. The mod reads the path endings to decide if section 8 is required.
+- **Change table.** The first column is the file path. Start the second column with `new` for a new file; the pane tags every other row `edit`. The mod reads the path endings to decide if section 8 is required.
 - **SOLID.** List only the principles really in play. Maximum 3. Use a box table with: principle, where in the code, why. Never list all 5 with "n/a".
 - **Pattern.** First line: `**Chosen:** <name>`. The name comes from the pattern list in `dry-run-design.md`, or it is `none`. Then say why it wins. Then name exactly one rejected alternative and say why it loses. Repo rules win: "no pattern, because speculative" is valid.
 - **DSA.** First line: `**Chosen:** <name>`. The name is one of the names in `dry-run-dsa.md`, or `none`. Then one line of why. Then the Big-O (required). Then up to 3 links, copied from `dry-run-dsa.md` only. A name off the list is allowed. It just has no verified link.

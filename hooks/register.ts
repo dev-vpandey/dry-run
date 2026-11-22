@@ -289,7 +289,8 @@ async function startSession($: EngineInterface, cwd: string): Promise<void> {
   await loadRepoFile($)
   await registerCommands($)
   await registerRulesTool($)
-  void $.ui.open({ id: PANE_ID, title: PANE_TITLE })
+  // The pane is a view: a session without it still gates edits, so a failed open is not an error.
+  await $.ui.open({ id: PANE_ID, title: PANE_TITLE }).catch(() => undefined)
 }
 
 // A new thread gets the index again, and the fallback text until a dry run is posted.
