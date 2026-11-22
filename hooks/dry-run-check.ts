@@ -39,7 +39,7 @@ const FENCE = '```'
 
 // The lines of a message outside code fences. A heading shown inside a fence is
 // an example, not a heading. trimEnd drops the "\r" of a Windows line end.
-function linesOf(text: string): string[] {
+export function linesOf(text: string): string[] {
   const lines: string[] = []
   let isInFence = false
   for (const rawLine of text.split('\n')) {

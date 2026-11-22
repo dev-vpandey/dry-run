@@ -66,7 +66,11 @@ function ruleFileText(stubs: Stubs, path: string): string | undefined {
 // Each hook here stands for the engine, beneath the mod.
 // The mod forwards each of these events with next(e), so each needs a stub.
 function stubEngine(on: On, stubs: Stubs = {}) {
+  // Blocked-edit toasts are kept apart, so the older tests count only their own toasts.
   const toasts: string[] = []
+  const blocked: string[] = []
+  const statuses: (string | undefined)[] = []
+  const panes: string[] = []
   const registered: string[] = []
   const reads: string[] = []
   const contexts: (readonly string[] | undefined)[] = []
@@ -82,7 +86,15 @@ function stubEngine(on: On, stubs: Stubs = {}) {
     return { value: { command: e.name } }
   })
   on('ui.toast', (_: unknown, e: { text: string }) => {
-    toasts.push(e.text)
+    ;(e.text.startsWith('⊘ Blocked') ? blocked : toasts).push(e.text)
+    return { value: undefined }
+  })
+  on('ui.open', (_: unknown, e: { id: string }) => {
+    panes.push(e.id)
+    return { value: { isPlaced: true } }
+  })
+  on('ui.status', (_: unknown, e: { text: string | undefined }) => {
+    statuses.push(e.text)
     return { value: undefined }
   })
   on('env.get', (_: unknown, e: { name: string }) => ({ value: e.name === (stubs.homeVar ?? 'HOME') ? (stubs.home ?? '/Users/me') : undefined }))
@@ -141,7 +153,7 @@ function stubEngine(on: On, stubs: Stubs = {}) {
     return { text: e.text }
   })
   on('turn.complete', (_: unknown, e: { answer: string }) => ({ text: e.answer }))
-  return { toasts, registered, reads, contexts, tools, breakState: () => { isStateBroken = true } }
+  return { toasts, blocked, statuses, panes, registered, reads, contexts, tools, breakState: () => { isStateBroken = true } }
 }
 
 async function start($: Engine, cwd: string = '/') {
@@ -223,11 +235,12 @@ test('fail closed: a Bash check that throws denies the check', async ($, on) => 
 })
 
 test('an engine older than 2.1.304 gets a toast and the mod stays off', async ($, on) => {
-  const { toasts } = stubEngine(on, { version: '2.1.200' })
+  const { toasts, statuses } = stubEngine(on, { version: '2.1.200' })
   await start($)
 
   expect(toasts.length).toBe(1)
   expect(toasts[0]).toContain('2.1.304')
+  expect(statuses[statuses.length - 1]).toBeUndefined()
   expect(await $.tool.call(EDIT_LOCKED)).toEqual({ result: {} })
 })
 
@@ -1218,4 +1231,101 @@ test('rules: a prompt dropped beneath does not use up the index', async ($, on) 
 
   expect(lastContext(contexts).length).toBe(2)
   expect(lastContext(contexts)[0]).toContain('FORMAT TEXT')
+})
+
+// ---- Design Card: status line and toasts (ticket 27) ----
+
+const CARD_RUN = [
+  '## Dry run',
+  '### 1. Bug and goal',
+  '**Goal:** g',
+  '### 2. Change table',
+  '| `src/Foo.java` | edit | why |',
+  '### 3. SOLID',
+  'None at stake: small',
+  '### 4. Pattern',
+  '**Chosen:** none',
+  '### 5. DSA',
+  '**Chosen:** none',
+  '### 6. Worked example',
+  'x',
+  '### 7. Open decisions',
+  'y',
+].join('\n')
+
+const GATE_OPEN_TOAST = '✓ Gate open. Edits allowed for this dry run.'
+
+function last<T>(items: T[]): T | undefined {
+  return items[items.length - 1]
+}
+
+test('status line: locked with nothing, locked 4/4 after a dry run, open after go', async ($, on) => {
+  const { statuses } = stubEngine(on)
+  await start($)
+  expect(last(statuses)).toBe('⊘ dry-run locked · 0/4')
+
+  await complete($, CARD_RUN)
+  expect(last(statuses)).toBe('⊘ dry-run locked · 4/4')
+
+  await submit($, 'go')
+  expect(last(statuses)).toBe('✓ dry-run open · 4/4')
+
+  await run($, 'stop')
+  expect(last(statuses)).toBe('⊘ dry-run locked · 4/4')
+})
+
+test('status line: a clear forgets the dry run', async ($, on) => {
+  const { statuses } = stubEngine(on)
+  await start($)
+  await complete($, CARD_RUN)
+
+  await $.session.end(sessionEnd('clear'))
+
+  expect(last(statuses)).toBe('⊘ dry-run locked · 0/4')
+})
+
+test('status line: (repo) when the repo file set the mode, gone when off', async ($, on) => {
+  const { statuses } = await startWithRepoFile('{ "mode": "on" }')($, on)
+  expect(last(statuses)).toBe('⊘ dry-run locked (repo) · 0/4')
+
+  await dryRun($, 'off')
+  expect(last(statuses)).toBeUndefined()
+})
+
+test('status line: the repo file off clears the line at start', async ($, on) => {
+  const { statuses } = await startWithRepoFile('{ "mode": "off" }')($, on)
+
+  expect(last(statuses)).toBeUndefined()
+})
+
+test('toast: the gate opens by /go, by a go word', async ($, on) => {
+  const { toasts } = stubEngine(on)
+  await start($)
+
+  await run($, 'go')
+  await complete($, CARD_RUN)
+  await submit($, 'go')
+
+  expect(toasts).toEqual([GATE_OPEN_TOAST, GATE_OPEN_TOAST])
+})
+
+test('toast: a blocked edit names the path', async ($, on) => {
+  const { blocked } = stubEngine(on)
+  await start($)
+
+  await $.tool.call(EDIT_LOCKED)
+  await $.tool.call(WRITE_LOCKED)
+  await $.tool.call(EDIT_FREE)
+
+  expect(blocked).toEqual([
+    '⊘ Blocked Update(src/Foo.py) — Post a dry run, then say "go".',
+    '⊘ Blocked Update(src/Foo.py) — Post a dry run, then say "go".',
+  ])
+})
+
+test('the Design Card pane opens at session start', async ($, on) => {
+  const { panes } = stubEngine(on)
+  await start($)
+
+  expect(panes).toEqual(['design-card'])
 })

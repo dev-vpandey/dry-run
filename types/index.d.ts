@@ -24,6 +24,8 @@ declare module 'claude-code' {
       isToolBlocked: boolean
       // The main thread posted a dry run this session or since the last clear.
       isDryRunSeen: boolean
+      // The text of the newest dry run, for the Design Card. "" when none.
+      dryRunText: string
     }
   }
 }

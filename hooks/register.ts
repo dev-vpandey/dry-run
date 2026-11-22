@@ -6,6 +6,7 @@ import type { LockRules } from './gate-path'
 import { emptyRepoFile, lockRulesFor, parseRepoFile, restoreRepoFile } from './repo-file'
 import type { ParseResult, RepoFile } from './repo-file'
 import { goWordKind } from './go-word'
+import { PANE_ID, PANE_TITLE, sectionCount, statusLineText } from './design-card'
 import {
   bundledFiles,
   indexText,
@@ -61,6 +62,9 @@ const IS_TOOL_BLOCKED = { plugin: 'dry-run', key: 'isToolBlocked' } as const
 // The main thread posted a dry run since the session started or was cleared.
 const IS_DRY_RUN_SEEN = { plugin: 'dry-run', key: 'isDryRunSeen' } as const
 
+// The text of the newest dry run, for the Design Card. "" when none was posted.
+const DRY_RUN_TEXT = { plugin: 'dry-run', key: 'dryRunText' } as const
+
 const REPO_FILE_PATH = '/.claude/dry-run.json'
 
 const GO_NAME = 'go'
@@ -114,6 +118,11 @@ async function isToolBlocked($: EngineInterface): Promise<boolean> {
 async function isDryRunSeen($: EngineInterface): Promise<boolean> {
   const read = await $.state.get(IS_DRY_RUN_SEEN)
   return read.value === true
+}
+
+async function dryRunTextOf($: EngineInterface): Promise<string> {
+  const read = await $.state.get(DRY_RUN_TEXT)
+  return typeof read.value === 'string' ? read.value : ''
 }
 
 async function isGateToastShown($: EngineInterface): Promise<boolean> {
@@ -184,6 +193,14 @@ async function homeDir($: EngineInterface): Promise<string> {
     return home
   }
   return (await $.env.get('USERPROFILE')) ?? ''
+}
+
+const GATE_OPEN_TOAST = '✓ Gate open. Edits allowed for this dry run.'
+
+// The deny answer of an edit tool, with the toast that names the blocked path.
+function denyEdit($: EngineInterface, path: string): { deny: string } {
+  $.ui.toast(`⊘ Blocked Update(${path}) — Post a dry run, then say "go".`)
+  return { deny: DENY_TEXT }
 }
 
 // True when this edit must be denied. Throws when the tool call has no path.
@@ -266,17 +283,20 @@ async function startSession($: EngineInterface, cwd: string): Promise<void> {
   await $.state.set(IS_OFF, isOld)
   if (isOld) {
     $.ui.toast(`dry-run mod needs Claude Code ${MIN_VERSION} or newer. It is off for this session.`)
+    await refreshStatus($)
     return
   }
   await loadRepoFile($)
   await registerCommands($)
   await registerRulesTool($)
+  void $.ui.open({ id: PANE_ID, title: PANE_TITLE })
 }
 
 // A new thread gets the index again, and the fallback text until a dry run is posted.
 async function resetThread($: EngineInterface): Promise<void> {
   await $.state.set(IS_INDEX_SENT, false)
   await $.state.set(IS_DRY_RUN_SEEN, false)
+  await $.state.set(DRY_RUN_TEXT, '')
 }
 
 const RULES_TOOL_NAME = 'dry_run_rules'
@@ -470,6 +490,7 @@ async function loadRepoFile($: EngineInterface): Promise<void> {
     await $.state.set(IS_SOFT, result.file.mode === 'soft')
   }
   await showGateDown($, result.file)
+  await refreshStatus($)
 }
 
 // Register /go and /stop once. A second session.start must not register them again.
@@ -485,10 +506,24 @@ async function registerCommands($: EngineInterface): Promise<void> {
 
 // One go opens the gate. It ends the waiting mark and sets the skipped mark
 // to the given value (true only for "just do it" with no dry run).
-async function openGate($: EngineInterface, isSkipped: boolean): Promise<void> {
+export async function openGate($: EngineInterface, isSkipped: boolean): Promise<void> {
   await $.state.set(IS_OPEN, true)
   await $.state.set(IS_WAITING, false)
   await $.state.set(IS_SKIPPED, isSkipped)
+  $.ui.toast(GATE_OPEN_TOAST)
+  await refreshStatus($)
+}
+
+// The UI status line: gate, sections done, and (repo) when the repo file set the mode.
+// The line is cleared while the mod is off or soft: there is no gate to show.
+async function refreshStatus($: EngineInterface): Promise<void> {
+  const state = await rulesState($)
+  if (state !== 'locked' && state !== 'open') {
+    await $.ui.status(undefined)
+    return
+  }
+  const isRepo = !(await isSessionSet($)) && (await repoFileOf($)).hasMode
+  await $.ui.status(statusLineText({ gate: state, count: sectionCount(await dryRunTextOf($)), isRepo }))
 }
 
 // The text /dry-run shows: the mode, where it came from, and the gate.
@@ -523,15 +558,18 @@ async function runDryRunCommand($: EngineInterface, args: string): Promise<{ tex
   } else if (word !== '') {
     return { text: 'Use /dry-run, /dry-run on or /dry-run off.' }
   }
+  await refreshStatus($)
   return { text: await statusText($) }
 }
 
 // A new dry run locks the gate and waits for the next go.
-async function waitForGo($: EngineInterface): Promise<void> {
+async function waitForGo($: EngineInterface, dryRun: string): Promise<void> {
   await $.state.set(IS_DRY_RUN_SEEN, true)
+  await $.state.set(DRY_RUN_TEXT, dryRun)
   await $.state.set(IS_OPEN, false)
   await $.state.set(IS_WAITING, true)
   await $.state.set(IS_SKIPPED, false)
+  await refreshStatus($)
 }
 
 // The section 8 rule needs the explainLanguage setting. That setting is not
@@ -578,10 +616,11 @@ async function lockOnClear($: EngineInterface): Promise<void> {
   await loadRepoFile($)
 }
 
-async function lockGate($: EngineInterface) {
+export async function lockGate($: EngineInterface) {
   await $.state.set(IS_OPEN, false)
   await $.state.set(IS_WAITING, false)
   await $.state.set(IS_SKIPPED, false)
+  await refreshStatus($)
   return { text: '⊘ Gate locked. Edits to code files are blocked.' }
 }
 
@@ -610,13 +649,13 @@ export const register: Register = (on, options) => {
   // One hook per edit tool. Each names its tool as a literal, so the engine can
   // narrow the call. A loop over a list of names gives it a union it cannot match.
   on('tool.call', { tool: 'Edit' }, async ($, e, next) => {
-    return (await mustDeny($, e.file_path)) ? { deny: DENY_TEXT } : next(e)
+    return (await mustDeny($, e.file_path)) ? denyEdit($, e.file_path) : next(e)
   }).catch(($, e, next) => failClosed(next, e, FAIL_CLOSED_CALL))
   on('tool.call', { tool: 'Write' }, async ($, e, next) => {
-    return (await mustDeny($, e.file_path)) ? { deny: DENY_TEXT } : next(e)
+    return (await mustDeny($, e.file_path)) ? denyEdit($, e.file_path) : next(e)
   }).catch(($, e, next) => failClosed(next, e, FAIL_CLOSED_CALL))
   on('tool.call', { tool: 'NotebookEdit' }, async ($, e, next) => {
-    return (await mustDeny($, e.notebook_path)) ? { deny: DENY_TEXT } : next(e)
+    return (await mustDeny($, e.notebook_path)) ? denyEdit($, e.notebook_path) : next(e)
   }).catch(($, e, next) => failClosed(next, e, FAIL_CLOSED_CALL))
 
   // Bash may write a file. Deny when it names a locked file and is not read-only.
@@ -628,7 +667,7 @@ export const register: Register = (on, options) => {
   // Lock first, then next(e): if next throws, the gate is already locked.
   on('turn.complete', async ($, e, next) => {
     if (isMainLoop(e) && !(await isOff($)) && isDryRun(e.answer, EXPLAIN_LANGUAGE)) {
-      await waitForGo($)
+      await waitForGo($, e.answer)
     }
     return next(e)
   })
