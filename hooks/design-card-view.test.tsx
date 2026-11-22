@@ -337,5 +337,5 @@ test('fold all says unfold all when every box is folded', async ($, on) => {
   const button = await ui.find({ type: 'Button', key: 'fold-all' })
   await ui.unmount()
 
-  expect(button?.props.label).toBe('unfold all [f]')
+  expect(button?.props.label).toBe('unfold all')
 })

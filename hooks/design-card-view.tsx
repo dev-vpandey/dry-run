@@ -6,7 +6,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, RenderChildren } from 'claude-code'
 import { tokensFor } from './design-card-colors'
 import type { Tokens } from './design-card-colors'
-import { foldAll, foldedNames, namesOf, PANE_ID, parseCard, repoUnlockLine, SECTION_TOTAL, sectionCount, toggleFold } from './design-card'
+import { foldAll, foldedNames, namesOf, PANE_ID, parseCard, repoUnlockLine, SECTION_TOTAL, sectionCount, toggleFold, topFill, wrapWords } from './design-card'
 import type { Card, Gate, Names, SectionName } from './design-card'
 import { emptyRepoFile, restoreRepoFile } from './repo-file'
 import { lockGate, openGate } from './register'
@@ -122,84 +122,106 @@ function levelColor(level: 'E' | 'M' | 'H', t: Tokens): string {
   return level === 'M' ? t.amber : t.red
 }
 
-// A digit folds the box of that section number: the numbers of a dry run's headings.
-const FOLD_KEYS = new Map<SectionName, string>([
-  ['Goal', '1'],
-  ['Change table', '2'],
-  ['SOLID', '3'],
-  ['Pattern', '4'],
-  ['DSA', '5'],
-  ['Worked example', '6'],
-  ['Open decisions', '7'],
-  ['Language explainer', '8'],
-])
+// The boxes, in dry-run order.
+const SECTION_NAMES: readonly SectionName[] = [
+  'Goal',
+  'Change table',
+  'SOLID',
+  'Pattern',
+  'DSA',
+  'Worked example',
+  'Open decisions',
+  'Language explainer',
+]
 
-function paneTree($: EngineInterface, els: Els, view: View, card: Card): ReturnType<Els['Box']> {
+// The frame of a box is drawn here in text, not by the Box border: this renderer clips
+// anything laid over a border, and a Box has no title. So the title is part of the top line.
+// Every row is one line, so the right edge lines up: long text is wrapped by wrapWords.
+function paneTree($: EngineInterface, els: Els, view: View, card: Card, width: number): ReturnType<Els['Box']> {
   const { Box, Text, Button, Link } = els
   const t = TOKENS
   const gate = gateOf(view, t)
+  const inner = Math.max(10, width - 4)
   const pill = (label: string, color: string, bg: string) => pillOf(els, label, color, bg)
-  const words = (text: string) => <Text color={t.fg}>{text === '' ? '—' : text}</Text>
-  const soft = (text: string) => <Text color={t.dim}>{text}</Text>
+  const text = (value: string, color: string) => <Text color={color}>{value}</Text>
+  // Rows of wrapped words. `prefix` is the room an element before the first line takes.
+  const wrapped = (value: string, color: string, prefix = 0) =>
+    wrapWords(value, inner - prefix, inner).map(line => text(line, color))
+  const dash = '—'
   // The boxes shown. The explainer is shown only when the dry run has it.
-  const shown = [...FOLD_KEYS.keys()].filter(name => name !== 'Language explainer' || card.done.includes(name))
-  // One box. Its title is laid over the top border, as a button that folds the box.
-  // A terminal cannot put text in a border, so the title is a Box placed on the border row.
-  const section = (name: SectionName, color: string, children: RenderChildren) => {
+  const shown = [...SECTION_NAMES].filter(name => name !== 'Language explainer' || card.done.includes(name))
+  const section = (name: SectionName, color: string, rows: RenderChildren[]) => {
     const isFolded = view.folded.includes(name)
+    const title = ` ${isFolded ? '▸' : '▾'} ${name} `
+    const edge = (left: string, right: string) => <Text color={color}>{`${left}${'─'.repeat(width - 2)}${right}`}</Text>
     return (
-      <Box flexDirection="column" borderStyle="round" borderColor={color} paddingX={1} marginTop={1}>
-        <Box position="absolute" top={-1} left={1}>
-          <Button key={`fold-${name}`} hotkey={FOLD_KEYS.get(name)} onPress={() => update($, foldedBoxes, text => toggleFold(text, name))}>
-            <Text color={color} bold>{` ${isFolded ? '▸' : '▾'} ${name} `}</Text>
+      <Box flexDirection="column" marginTop={1}>
+        <Box>
+          <Text color={color}>╭─</Text>
+          <Button key={`fold-${name}`} plain onPress={() => update($, foldedBoxes, value => toggleFold(value, name))}>
+            <Text color={color} bold>{title}</Text>
           </Button>
+          <Text color={color}>{`${'─'.repeat(topFill(title, width))}╮`}</Text>
         </Box>
-        {isFolded ? <Text color={t.faint}>…</Text> : children}
+        {(isFolded ? [text('…', t.faint)] : rows).map(row => (
+          <Box>
+            <Text color={color}>│ </Text>
+            <Box width={inner}>{row}</Box>
+            <Text color={color}> │</Text>
+          </Box>
+        ))}
+        {edge('╰', '╯')}
       </Box>
     )
   }
-  const nameLine = (name: string, color: string, bg: string) => (name === '' ? <Text>—</Text> : pill(name, color, bg))
+  const nameRow = (name: string, color: string, bg: string) => (name === '' ? text(dash, t.fg) : pill(name, color, bg))
   const solid = card.solid.rows.length === 0
-    ? [words(card.solid.note)]
-    : card.solid.rows.map(row => (
-        <Box>
-          {pill(row.name, t.term, t.claude)}
-          {soft(` ${row.why}`)}
-        </Box>
-      ))
-  const changes = card.changes.length === 0
-    ? [words('')]
-    : card.changes.map(row => (
-        <Box flexDirection="column">
+    ? wrapped(card.solid.note === '' ? dash : card.solid.note, t.fg)
+    : card.solid.rows.flatMap(row => {
+        const [first = '', ...rest] = wrapWords(row.why, inner - row.name.length - 3, inner)
+        return [
           <Box>
-            {pill(row.tag, t.term, row.tag === 'new' ? t.green : t.amber)}
-            <Text color={t.blue} bold>{` ${row.path}`}</Text>
-          </Box>
-          {soft(`${row.what} · ${row.why}`)}
-        </Box>
-      ))
+            {pill(row.name, t.term, t.claude)}
+            {text(` ${first}`, t.dim)}
+          </Box>,
+          ...rest.map(line => text(line, t.dim)),
+        ]
+      })
+  const changes = card.changes.length === 0
+    ? [text(dash, t.fg)]
+    : card.changes.flatMap(row => [
+        <Box>
+          {pill(row.tag, t.term, row.tag === 'new' ? t.green : t.amber)}
+          <Text color={t.blue} bold>{` ${row.path}`}</Text>
+        </Box>,
+        ...wrapped(`${row.what} · ${row.why}`, t.dim),
+      ])
   const example = card.example.input === '' && card.example.old === ''
-    ? [words('')]
+    ? [text(dash, t.fg)]
     : [
-        soft(card.example.input),
+        ...wrapped(card.example.input, t.dim),
         <Box>
           <Text color={t.red} bold>{'old → '}</Text>
-          {words(card.example.old)}
+          {text(card.example.old, t.fg)}
         </Box>,
         <Box>
           <Text color={t.green} bold>{'new → '}</Text>
-          {words(card.example.now)}
+          {text(card.example.now, t.fg)}
         </Box>,
       ]
   const decisions = card.decisions.length === 0
-    ? [soft(card.done.includes('Open decisions') ? 'none' : '—')]
-    : card.decisions.map((decision, index) => (
-        <Box>
-          <Text color={decision.isPick ? t.amber : t.dim}>{decision.isPick ? '★ ' : '○ '}</Text>
-          {words(`${'AB'.charAt(index)}. ${decision.text} `)}
-          {decision.isPick && pill('★ pick', t.amber, t.amberBg)}
-        </Box>
-      ))
+    ? [text(card.done.includes('Open decisions') ? 'none' : dash, t.dim)]
+    : card.decisions.flatMap((decision, index) => {
+        const mark = decision.isPick ? '★ pick' : '○'
+        const [first = '', ...rest] = wrapWords(`${'AB'.charAt(index)}. ${decision.text}`, inner - mark.length - 3, inner)
+        return [
+          <Box>
+            {decision.isPick ? pill(mark, t.amber, t.amberBg) : text(`${mark} `, t.dim)}
+            {text(` ${first}`, t.fg)}
+          </Box>,
+          ...rest.map(line => text(line, t.fg)),
+        ]
+      })
   const explainer = [
     ...card.explainer.rows.map(row => (
       <Box>
@@ -208,9 +230,10 @@ function paneTree($: EngineInterface, els: Els, view: View, card: Card): ReturnT
         <Text color={t.green}>{row.java}</Text>
       </Box>
     )),
-    soft(card.explainer.flow === '' ? '' : `Flow: ${card.explainer.flow}`),
+    ...wrapped(card.explainer.flow === '' ? '' : `Flow: ${card.explainer.flow}`, t.dim),
   ]
   const isAllFolded = shown.every(name => view.folded.includes(name))
+  // Go stays above the boxes: the pane is taller than a short screen, and Go must stay in view.
   return (
     <Box flexDirection="column">
       <Box flexDirection="column">
@@ -222,22 +245,38 @@ function paneTree($: EngineInterface, els: Els, view: View, card: Card): ReturnT
         <Text color={t.dim}>{' · Design Card  '}</Text>
         <Button
           key="fold-all"
+          plain
           hotkey="f"
-          label={isAllFolded ? 'unfold all [f]' : 'fold all [f]'}
-          onPress={() => update($, foldedBoxes, text => foldAll(text, shown))}
+          label={isAllFolded ? 'unfold all' : 'fold all'}
+          onPress={() => update($, foldedBoxes, value => foldAll(value, shown))}
         />
       </Box>
       {pill(gate.label, gate.color, gate.bg)}
-      {section('Goal', t.fg, words(card.goal))}
+      <Box>
+        {view.gate === 'open' ? (
+          <Box>
+            {pill(view.isSkipped ? '✓ Gate open · dry run skipped' : '✓ Approved for this dry run', t.green, t.greenBg)}
+            <Button key="stop" label="/stop" onPress={async () => { await lockGate($) }} />
+          </Box>
+        ) : view.isWaiting ? (
+          <Box>
+            <Button key="go" label="▶ Go [g]" hotkey="g" variant="primary" onPress={() => openGate($, false)} />
+            {text(' or type /go · "go ahead"', t.dim)}
+          </Box>
+        ) : (
+          text('▶ Go [g] needs a dry run', t.dim)
+        )}
+      </Box>
+      {section('Goal', t.fg, wrapped(card.goal === '' ? dash : card.goal, t.fg))}
       {section('Change table', t.green, changes)}
       {section('SOLID', t.claude, solid)}
       {section('Pattern', t.violet, [
-        nameLine(card.pattern.name, t.violet, t.violetBg),
-        ...[card.pattern.note, card.pattern.why].filter(line => line !== '').map(soft),
+        nameRow(card.pattern.name, t.violet, t.violetBg),
+        ...[card.pattern.note, card.pattern.why].filter(line => line !== '').flatMap(line => wrapped(line, t.dim)),
       ])}
       {section('DSA', t.blue, [
-        nameLine(card.dsa.name, t.blue, t.blueBg),
-        ...[card.dsa.note, card.dsa.why, card.dsa.bigO].filter(line => line !== '').map(soft),
+        nameRow(card.dsa.name, t.blue, t.blueBg),
+        ...[card.dsa.note, card.dsa.why, card.dsa.bigO].filter(line => line !== '').flatMap(line => wrapped(line, t.dim)),
         ...card.dsa.rows.map(row => (
           <Box>
             <Text color={t.blue}>○ </Text>
@@ -249,22 +288,7 @@ function paneTree($: EngineInterface, els: Els, view: View, card: Card): ReturnT
       {section('Worked example', t.fg, example)}
       {section('Open decisions', t.amber, decisions)}
       {card.done.includes('Language explainer') && section('Language explainer', t.violet, explainer)}
-      <Box marginTop={1}>
-        {view.gate === 'open' ? (
-          <Box>
-            {pill(view.isSkipped ? '✓ Gate open · dry run skipped' : '✓ Approved for this dry run', t.green, t.greenBg)}
-            <Button key="stop" label="/stop" onPress={async () => { await lockGate($) }} />
-          </Box>
-        ) : view.isWaiting ? (
-          <Box>
-            <Button key="go" label="▶ Go [g]" hotkey="g" variant="primary" onPress={() => openGate($, false)} />
-            {soft(' or type /go · "go ahead"')}
-          </Box>
-        ) : (
-          soft('▶ Go [g] needs a dry run')
-        )}
-      </Box>
-      {view.unlocked > 0 && soft(repoUnlockLine(view.unlocked))}
+      {view.unlocked > 0 && text(repoUnlockLine(view.unlocked), t.dim)}
     </Box>
   )
 }
@@ -285,6 +309,6 @@ export const register: Register = on => {
     if (view === null) {
       return next(e)
     }
-    return paneTree($, $.ui.resolve(e), view, parseCard(view.text, await namesFrom($)))
+    return paneTree($, $.ui.resolve(e), view, parseCard(view.text, await namesFrom($)), e.props.bodyColumns)
   })
 }

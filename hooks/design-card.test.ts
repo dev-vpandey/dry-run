@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { foldAll, foldedNames, namesOf, parseCard, repoUnlockLine, sectionCount, statusLineText, toggleFold } from './design-card'
+import { foldAll, foldedNames, namesOf, parseCard, repoUnlockLine, sectionCount, statusLineText, toggleFold, topFill, wrapWords } from './design-card'
 
 // Written out here on purpose: the test must not share the mod's list.
 const NAMES = { patterns: ['Strategy', 'Observer'], dsa: ['Two pointers', 'Hash map / set lookup'] }
@@ -188,4 +188,21 @@ test('the repo-unlock line counts the paths', async () => {
 test('names are read from the names file', async () => {
   const text = 'SOLID: A, B\nPatterns: Strategy, Factory Method\nDSA: Two pointers, Union-find'
   expect(namesOf(text)).toEqual({ patterns: ['Strategy', 'Factory Method'], dsa: ['Two pointers', 'Union-find'] })
+})
+
+test('an empty name is not called off the list', async () => {
+  const text = ['### 4. Pattern', '**Chosen:**'].join('\n')
+  expect(parseCard(text, NAMES).pattern.note).toBe('')
+})
+
+test('the top edge fills the width after the corner, the dash and the title', async () => {
+  // ╭─ ▾ Goal ───╮ is 1 + 1 + 8 + fill + 1 wide.
+  expect(topFill(' ▾ Goal ', 20)).toBe(9)
+  expect(topFill(' ▾ A very long title ', 10)).toBe(0)
+})
+
+test('words wrap to the width, the first line to its own width', async () => {
+  expect(wrapWords('one two three four', 8, 8)).toEqual(['one two', 'three', 'four'])
+  expect(wrapWords('one two three', 5, 20)).toEqual(['one', 'two three'])
+  expect(wrapWords('', 10, 10)).toEqual([''])
 })

@@ -268,7 +268,8 @@ function rowsOf(body: string[]): LeetRow[] {
 // DSA adds "no verified link" because a name off the list has no row in the rules file.
 function noteOf(name: string, list: string[] | undefined, isDsa: boolean): string {
   // No names file to check against: say nothing rather than call every name off the list.
-  if (list === undefined || isOnList(name, list)) {
+  // No name yet: nothing to call off the list.
+  if (list === undefined || name === '' || isOnList(name, list)) {
     return ''
   }
   return isDsa ? `${NOT_ON_LIST} · ${NO_LINK}` : NOT_ON_LIST
@@ -339,4 +340,28 @@ export function toggleFold(text: string, name: string): string {
 export function foldAll(text: string, shown: string[]): string {
   const names = foldedNames(text)
   return shown.every(name => names.includes(name)) ? '' : shown.join(',')
+}
+
+// The dashes of a box's top edge: ╭─ title ────╮ is 1 + 1 + title + dashes + 1 wide.
+export function topFill(title: string, width: number): number {
+  return Math.max(0, width - 3 - title.length)
+}
+
+// Words wrapped to lines. The first line has its own width, because a pill may stand before it.
+// A word longer than a line stays whole on a line of its own.
+export function wrapWords(text: string, firstWidth: number, width: number): string[] {
+  const lines: string[] = ['']
+  for (const word of text.split(' ').filter(item => item !== '')) {
+    const last = lines.length - 1
+    const limit = last === 0 ? firstWidth : width
+    const current = lines[last] ?? ''
+    if (current === '') {
+      lines[last] = word
+    } else if (current.length + 1 + word.length <= limit) {
+      lines[last] = `${current} ${word}`
+    } else {
+      lines.push(word)
+    }
+  }
+  return lines
 }
