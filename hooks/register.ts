@@ -1,4 +1,4 @@
-import type { Args, EngineInterface, Next, Register } from 'claude-code'
+import type { Args, EngineInterface, Register } from 'claude-code'
 import { namesLockedFile, namesSwitchFile } from './bash-scan'
 import { isDryRun } from './dry-run-check'
 import { isLocked } from './gate-path'
@@ -145,13 +145,6 @@ async function findGitRoot($: EngineInterface, cwd: string): Promise<string> {
   return ''
 }
 
-// The edit tools the gate guards, and the field that holds each one's path.
-const GUARDED_TOOLS = [
-  { tool: 'Edit', pathField: 'file_path' },
-  { tool: 'Write', pathField: 'file_path' },
-  { tool: 'NotebookEdit', pathField: 'notebook_path' },
-] as const
-
 // The home folder, or "" when the environment does not say. Names are literals
 // because the engine lists them. HOME first, then USERPROFILE (Windows).
 async function homeDir($: EngineInterface): Promise<string> {
@@ -178,8 +171,9 @@ async function mustDeny($: EngineInterface, path: unknown): Promise<boolean> {
 }
 
 // Fail closed. If the guard threw before next, deny. If next already ran, replay it.
-const failClosed = (_$: EngineInterface, e: Args<'tool.call'>, next: Next<'tool.call'>) =>
-  next.called ? next(e) : { deny: DENY_TEXT }
+// The handler is written inside each .catch, because the engine types its `next`
+// per matched tool. A shared function with a plain Next type does not fit.
+const DENY_CALL = { deny: DENY_TEXT }
 
 // True when this Bash call must be denied. Throws when the call has no command.
 // A call with `isReadOnly` set is a read, so it is never denied.
@@ -199,9 +193,7 @@ async function mustDenyBash($: EngineInterface, e: Args<'tool.check'>): Promise<
   return namesLockedFile(command, await homeDir($), await lockRulesOf($)) && !(await isOpen($))
 }
 
-// Fail closed for tool.check: same rule as failClosed above.
-const failClosedCheck = (_$: EngineInterface, e: Args<'tool.check'>, next: Next<'tool.check'>) =>
-  next.called ? next(e) : { decision: 'deny' as const, reason: DENY_TEXT }
+const DENY_CHECK = { decision: 'deny' as const, reason: DENY_TEXT }
 
 async function registerStopCommand($: EngineInterface): Promise<void> {
   const description = 'Lock the gate again. Edits to code files need a new /go.'
@@ -417,17 +409,22 @@ export const register: Register = on => {
     return next(e)
   })
 
-  for (const guarded of GUARDED_TOOLS) {
-    on('tool.call', { tool: guarded.tool }, async ($, e, next) => {
-      const path = (e as Record<string, unknown>)[guarded.pathField]
-      return (await mustDeny($, path)) ? { deny: DENY_TEXT } : next(e)
-    }).catch(failClosed)
-  }
+  // One hook per edit tool. Each names its tool as a literal, so the engine can
+  // narrow the call. A loop over a list of names gives it a union it cannot match.
+  on('tool.call', { tool: 'Edit' }, async ($, e, next) => {
+    return (await mustDeny($, e.file_path)) ? { deny: DENY_TEXT } : next(e)
+  }).catch(($, e, next) => (next.called ? next(e) : DENY_CALL))
+  on('tool.call', { tool: 'Write' }, async ($, e, next) => {
+    return (await mustDeny($, e.file_path)) ? { deny: DENY_TEXT } : next(e)
+  }).catch(($, e, next) => (next.called ? next(e) : DENY_CALL))
+  on('tool.call', { tool: 'NotebookEdit' }, async ($, e, next) => {
+    return (await mustDeny($, e.notebook_path)) ? { deny: DENY_TEXT } : next(e)
+  }).catch(($, e, next) => (next.called ? next(e) : DENY_CALL))
 
   // Bash may write a file. Deny when it names a locked file and is not read-only.
   on('tool.check', { tool: 'Bash' }, async ($, e, next) => {
     return (await mustDenyBash($, e)) ? { decision: 'deny', reason: DENY_TEXT } : next(e)
-  }).catch(failClosedCheck)
+  }).catch(($, e, next) => (next.called ? next(e) : DENY_CHECK))
 
   // A dry run posted by the main thread locks the gate and waits for a go.
   // Lock first, then next(e): if next throws, the gate is already locked.

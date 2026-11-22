@@ -43,10 +43,10 @@ function splitWords(part: string): string[] {
 function stripWrappers(word: string): string {
   let start = 0
   let end = word.length
-  while (start < end && WRAPPERS.has(word[start])) {
+  while (start < end && WRAPPERS.has(word.charAt(start))) {
     start++
   }
-  while (end > start && WRAPPERS.has(word[end - 1])) {
+  while (end > start && WRAPPERS.has(word.charAt(end - 1))) {
     end--
   }
   return word.slice(start, end)
@@ -68,10 +68,11 @@ function isLockedWord(word: string, home: string, rules?: LockRules): boolean {
 // True when one part of the command names a locked file in a way that writes.
 function partNamesLocked(part: string, home: string, rules?: LockRules): boolean {
   const words = splitWords(part)
-  const isRunner = words.length > 0 && RUNNERS.has(words[0])
+  const isRunner = words.length > 0 && RUNNERS.has(words[0] ?? '')
   for (let i = 0; i < words.length; i++) {
+    const word = words[i] ?? ''
     const isTarget = i > 0 && words[i - 1] === '>'
-    if ((isTarget || !isRunner) && isLockedWord(words[i], home, rules)) {
+    if ((isTarget || !isRunner) && isLockedWord(word, home, rules)) {
       return true
     }
   }

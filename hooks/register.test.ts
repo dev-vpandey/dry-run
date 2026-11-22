@@ -12,6 +12,11 @@ function run($: any, command: string) {
 }
 
 const EDIT_LOCKED = { tool: 'Edit', file_path: 'src/Foo.py', old_string: 'a', new_string: 'b' } as const
+// A full SessionEndInput: the engine always sends the session id and the resume id.
+function sessionEnd(reason: 'clear' | 'other') {
+  return { reason, sessionId: 'session-1', resume: { id: 'session-1' } }
+}
+
 const EDIT_FREE = { tool: 'Edit', file_path: 'README.md', old_string: 'a', new_string: 'b' } as const
 
 type Stubs = {
@@ -467,11 +472,11 @@ test('relock: a real /clear (session.end) locks the gate, /dry-run off survives 
   await start($)
   await run($, 'go')
 
-  await $.session.end({ reason: 'clear' })
+  await $.session.end(sessionEnd('clear'))
   expect(await $.tool.call(EDIT_LOCKED)).toEqual({ deny: DENY_TEXT })
 
   await dryRun($, 'off')
-  await $.session.end({ reason: 'clear' })
+  await $.session.end(sessionEnd('clear'))
   expect(await $.tool.call(EDIT_LOCKED)).toEqual({ result: {} })
 })
 
@@ -490,7 +495,7 @@ test('a session end for another reason does not lock the gate', async ($, on) =>
   await start($)
   await run($, 'go')
 
-  await $.session.end({ reason: 'other' })
+  await $.session.end(sessionEnd('other'))
 
   expect(await $.tool.call(EDIT_LOCKED)).toEqual({ result: {} })
 })
@@ -500,7 +505,7 @@ test('a compact keeps the gate open', async ($, on) => {
   await start($)
   await run($, 'go')
 
-  const message = { role: 'user', content: [], text: 'hi', toolUses: [] }
+  const message = { role: 'user' as const, content: [], text: 'hi', toolUses: [] }
   await $.session.compact({ trigger: 'auto', messages: [message] })
 
   expect(await $.tool.call(EDIT_LOCKED)).toEqual({ result: {} })
@@ -778,13 +783,13 @@ test('the file is read again after /clear: new rules apply, session choice stays
   expect(await $.tool.call(EDIT_LOCKED)).toEqual({ result: {} })
 
   stubs.repoFile = '{ "mode": "on" }'
-  await $.session.end({ reason: 'clear' })
+  await $.session.end(sessionEnd('clear'))
   expect(await $.tool.call(EDIT_LOCKED)).toEqual({ deny: DENY_TEXT })
   expect(toasts).toEqual([GATE_DOWN_SOFT])
 
   await dryRun($, 'off')
   stubs.repoFile = '{ "mode": "on", "lock": [".yaml"] }'
-  await $.session.end({ reason: 'clear' })
+  await $.session.end(sessionEnd('clear'))
   expect(await $.tool.call(EDIT_LOCKED)).toEqual({ result: {} })
   expect(await $.tool.call({ tool: 'Edit', file_path: '/repo/a.yaml', old_string: 'a', new_string: 'b' } as never)).toEqual({ result: {} })
 })
@@ -795,7 +800,7 @@ test('both /clear signals together show a bad-file toast once', async ($, on) =>
   await start($, '/repo/src')
 
   stubs.repoFile = '{ "mod": 1 }'
-  await $.session.end({ reason: 'clear' })
+  await $.session.end(sessionEnd('clear'))
   await $.classic.SessionStart({ source: 'clear' })
 
   expect(toasts.length).toBe(1)
@@ -805,7 +810,7 @@ test('the gate-down toast shows once per session, and again in the next session'
   const stubs: Stubs = { gitRoot: '/repo', repoFile: '{ "mode": "soft" }' }
   const { toasts } = stubEngine(on, stubs)
   await start($, '/repo/src')
-  await $.session.end({ reason: 'clear' })
+  await $.session.end(sessionEnd('clear'))
   await $.classic.SessionStart({ source: 'clear' })
   expect(toasts).toEqual([GATE_DOWN_SOFT])
 
@@ -818,14 +823,14 @@ test('an engine below the floor stays off: the repo file is not read', async ($,
 
   expect(reads).toEqual([])
   expect(await $.tool.call(EDIT_LOCKED)).toEqual({ result: {} })
-  await $.session.end({ reason: 'clear' })
+  await $.session.end(sessionEnd('clear'))
   expect(await $.tool.call(EDIT_LOCKED)).toEqual({ result: {} })
 })
 
 test('an engine below the floor: /clear reads no repo file and shows no repo toast', async ($, on) => {
   const { reads, toasts } = await startWithRepoFile('{ "mode": "off", "unlock": [".sql"] }', { version: '2.1.300' })($, on)
 
-  await $.session.end({ reason: 'clear' })
+  await $.session.end(sessionEnd('clear'))
   await $.classic.SessionStart({ source: 'clear' })
 
   expect(reads).toEqual([])
