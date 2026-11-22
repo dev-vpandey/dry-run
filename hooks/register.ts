@@ -9,7 +9,7 @@ import { goWordKind } from './go-word'
 import {
   bundledFiles,
   indexText,
-  FORMAT_FILE,
+  fallbackFiles,
   GENERIC_PACK,
   isRuleName,
   joinRules,
@@ -310,16 +310,26 @@ function packOf(options: PluginOptions): string {
   return typeof value === 'string' ? value : GENERIC_PACK
 }
 
-// The text of one file, or throws. The user's copy wins over the bundled one.
-async function readRuleFile($: EngineInterface, relative: string): Promise<string> {
-  const override = overridePath(await homeDir($), relative)
-  const path =
-    override !== null && (await $.fs.exists(override)) ? override : `${$.plugin.root}/templates/${relative}`
+async function readText($: EngineInterface, path: string): Promise<string> {
   const text = await $.fs.read(path)
   if (typeof text !== 'string') {
     throw new Error(`rule file: not text: ${path}`)
   }
   return text
+}
+
+// The text of one file, or throws. The user's copy wins over the bundled one. A copy
+// that cannot be read is skipped: a bad override must not take the rules away.
+async function readRuleFile($: EngineInterface, relative: string): Promise<string> {
+  const override = overridePath(await homeDir($), relative)
+  if (override !== null && (await $.fs.exists(override))) {
+    try {
+      return await readText($, override)
+    } catch {
+      // Fall through to the bundled file.
+    }
+  }
+  return readText($, `${$.plugin.root}/templates/${relative}`)
 }
 
 async function readRuleFiles($: EngineInterface, files: string[]): Promise<string[]> {
@@ -342,12 +352,7 @@ async function ruleText($: EngineInterface, name: RuleName, options: PluginOptio
 
 // Everything the model needs to write a dry run, for the fallback.
 async function fallbackRuleText($: EngineInterface, options: PluginOptions): Promise<string> {
-  const names: RuleName[] = ['design', 'examples', 'dsa']
-  const pack = packOf(options)
-  const files = [FORMAT_FILE]
-  for (const name of names) {
-    files.push(...bundledFiles(name, pack))
-  }
+  const files = fallbackFiles(packOf(options))
   return withReaderLine(joinRules(await readRuleFiles($, files)), options.explainLanguage)
 }
 
@@ -366,26 +371,29 @@ async function rulesState($: EngineInterface): Promise<RulesState> {
 
 // What one prompt carries for the model: the rule text when it is due, then the
 // status line. A rule file that cannot be read costs the text, never the prompt.
-async function rulesContext($: EngineInterface, options: PluginOptions): Promise<string[]> {
+// `hasIndex` is true when the index is in `texts`: the caller marks it sent only
+// once the prompt has entered.
+async function rulesContext(
+  $: EngineInterface,
+  options: PluginOptions,
+): Promise<{ texts: string[]; hasIndex: boolean }> {
   const state = await rulesState($)
   const isBlocked = await isToolBlocked($)
   const status = statusLine(state, isBlocked)
   if (state === 'off' || state === 'off-repo') {
-    return [status]
+    return { texts: [status], hasIndex: false }
   }
   try {
     if (isBlocked) {
       const isFallbackDue = state !== 'open' && !(await isDryRunSeen($))
-      return isFallbackDue ? [await fallbackRuleText($, options), status] : [status]
+      return { texts: isFallbackDue ? [await fallbackRuleText($, options), status] : [status], hasIndex: false }
     }
     if (await isIndexSent($)) {
-      return [status]
+      return { texts: [status], hasIndex: false }
     }
-    const index = await ruleText($, 'index', options)
-    await $.state.set(IS_INDEX_SENT, true)
-    return [index, status]
+    return { texts: [await ruleText($, 'index', options), status], hasIndex: true }
   } catch {
-    return [status]
+    return { texts: [status], hasIndex: false }
   }
 }
 
@@ -636,7 +644,12 @@ export const register: Register = (on, options) => {
     if (dropReason !== null) {
       return { drop: dropReason }
     }
-    return next({ ...e, context: [...(e.context ?? []), ...(await rulesContext($, options))] })
+    const rules = await rulesContext($, options)
+    const answer = await next({ ...e, context: [...(e.context ?? []), ...rules.texts] })
+    if (rules.hasIndex && answer.drop === undefined) {
+      await $.state.set(IS_INDEX_SENT, true)
+    }
+    return answer
   })
 
   // Served at tool.call and not at tool.run, so no permission prompt appears.

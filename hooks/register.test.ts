@@ -40,6 +40,10 @@ type Stubs = {
   refuseTool?: boolean
   // The variable that holds the home folder. HOME when left out.
   homeVar?: 'HOME' | 'USERPROFILE'
+  // Overrides that exist but cannot be read, by path under `~/.claude/dry-run/templates/`.
+  unreadable?: string[]
+  // The first prompt that reaches the bottom is dropped, as a hook beneath may do.
+  dropFirstPrompt?: boolean
 }
 
 const OVERRIDE_DIR = '/Users/me/.claude/dry-run/templates/'
@@ -92,11 +96,15 @@ function stubEngine(on: On, stubs: Stubs = {}) {
     }
     const isGit = stubs.gitRoot !== undefined && e.path === stubs.gitRoot + '/.git'
     const isRepoFile = stubs.repoFile !== undefined && e.path === stubs.gitRoot + '/.claude/dry-run.json'
-    return { value: isGit || isRepoFile || ruleFileText(stubs, e.path) !== undefined }
+    const isUnreadable = (stubs.unreadable ?? []).some(relative => e.path === OVERRIDE_DIR + relative)
+    return { value: isGit || isRepoFile || isUnreadable || ruleFileText(stubs, e.path) !== undefined }
   })
   on('fs.read', (_: unknown, e: { path: string }) => {
     reads.push(e.path)
     if (stubs.readThrows) {
+      return { deny: 'disk error' }
+    }
+    if ((stubs.unreadable ?? []).some(relative => e.path === OVERRIDE_DIR + relative)) {
       return { deny: 'disk error' }
     }
     const rule = ruleFileText(stubs, e.path)
@@ -127,6 +135,9 @@ function stubEngine(on: On, stubs: Stubs = {}) {
   })
   on('prompt.submit', (_: unknown, e: { text: string; context?: readonly string[] }) => {
     contexts.push(e.context)
+    if (stubs.dropFirstPrompt && contexts.length === 1) {
+      return { drop: 'dropped beneath' }
+    }
     return { text: e.text }
   })
   on('turn.complete', (_: unknown, e: { answer: string }) => ({ text: e.answer }))
@@ -1109,7 +1120,7 @@ test('rules: a refused tool shows one toast and the full text rides each prompt'
   await submit($, 'one')
   await submit($, 'two')
 
-  const full = 'FORMAT TEXT\n\nDESIGN TEXT\n\nGENERIC EXAMPLES\n\nDSA TEXT'
+  const full = 'FORMAT TEXT\n\nNAMES TEXT\n\nDESIGN TEXT\n\nGENERIC EXAMPLES\n\nDSA TEXT'
   expect(lastContext(contexts)).toEqual([full, 'dry-run mod: locked'])
   expect(contexts.length).toBe(2)
   expect(contexts[0]).toEqual([full, 'dry-run mod: locked'])
@@ -1189,4 +1200,22 @@ test('rules: a missing rule file does not stop the prompt when the tool is block
   await submit($, 'one')
 
   expect(lastContext(contexts)).toEqual(['dry-run mod: locked'])
+})
+
+test('rules: an override that cannot be read falls back to the bundled file', async ($, on) => {
+  stubEngine(on, { bundled: BUNDLED, overrides: { 'dry-run-dsa.md': 'MY DSA' }, unreadable: ['dry-run-dsa.md'] })
+  await start($)
+
+  expect(await rules($, 'dsa')).toEqual({ result: 'DSA TEXT' })
+})
+
+test('rules: a prompt dropped beneath does not use up the index', async ($, on) => {
+  const { contexts } = stubEngine(on, { bundled: BUNDLED, dropFirstPrompt: true })
+  await start($)
+
+  await submit($, 'dropped')
+  await submit($, 'kept')
+
+  expect(lastContext(contexts).length).toBe(2)
+  expect(lastContext(contexts)[0]).toContain('FORMAT TEXT')
 })

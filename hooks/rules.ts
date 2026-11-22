@@ -47,6 +47,15 @@ export function bundledFiles(name: RuleName, pack: string): string[] {
   return [`examples/${pack}.md`, `examples/${GENERIC_PACK}.md`]
 }
 
+// Every file the fallback sends, in order: the format, the names, then the rule files.
+export function fallbackFiles(pack: string): string[] {
+  const files = [FORMAT_FILE, NAMES_FILE]
+  for (const name of ['design', 'examples', 'dsa'] as const) {
+    files.push(...bundledFiles(name, pack))
+  }
+  return files
+}
+
 // Where a user's copy of one file sits. null when the home folder is not known.
 export function overridePath(home: string, relative: string): string | null {
   if (home === '') {

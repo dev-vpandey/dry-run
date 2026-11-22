@@ -1,6 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 import {
   bundledFiles,
+  fallbackFiles,
   joinRules,
   indexText,
   isRuleName,
@@ -32,6 +33,24 @@ test('examples gives the pack, then generic for the entries the pack lacks', () 
   expect(bundledFiles('examples', 'data-pipeline')).toEqual(['examples/data-pipeline.md', 'examples/generic.md'])
   // An unknown pack is not a path: it falls back to generic.
   expect(bundledFiles('examples', '../../etc/passwd')).toEqual(['examples/generic.md'])
+})
+
+test('the fallback reads format, names, design, examples and dsa, in that order', () => {
+  expect(fallbackFiles('generic')).toEqual([
+    'dry-run-format.md',
+    'dry-run-names.md',
+    'dry-run-design.md',
+    'examples/generic.md',
+    'dry-run-dsa.md',
+  ])
+  expect(fallbackFiles('data-pipeline')).toEqual([
+    'dry-run-format.md',
+    'dry-run-names.md',
+    'dry-run-design.md',
+    'examples/data-pipeline.md',
+    'examples/generic.md',
+    'dry-run-dsa.md',
+  ])
 })
 
 test('the override path sits under the home folder, same relative path', () => {
