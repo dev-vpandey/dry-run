@@ -26,6 +26,8 @@ declare module 'claude-code' {
       isDryRunSeen: boolean
       // The text of the newest dry run, for the Design Card. "" when none.
       dryRunText: string
+      // The Design Card boxes the person folded: their names, joined with commas.
+      foldedBoxes: string
     }
   }
 }

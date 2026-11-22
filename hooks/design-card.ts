@@ -1,4 +1,4 @@
-// Pure code for the Design Card: read a dry run into four boxes, and build the
+// Pure code for the Design Card: read a dry run into boxes, and build the
 // short texts the band and the status line show. No engine calls here.
 // Rules: SPEC section 6. Heading names match dry-run-check.ts.
 
@@ -11,15 +11,33 @@ export const PANE_TITLE = 'dry-run · Design Card'
 // The gate as the status line names it. The view adds 'soft' for the repo's soft mode.
 export type Gate = 'locked' | 'open'
 
-export type SectionName = 'Goal' | 'SOLID' | 'Pattern' | 'DSA'
+export type SectionName =
+  | 'Goal'
+  | 'Change table'
+  | 'SOLID'
+  | 'Pattern'
+  | 'DSA'
+  | 'Worked example'
+  | 'Open decisions'
+  | 'Language explainer'
 
-// Each box name, with the heading of its section in a dry run.
+// Each box name, with the heading of its section in a dry run, in dry-run order.
 const SECTIONS: readonly { name: SectionName; heading: string }[] = [
   { name: 'Goal', heading: '### 1. Bug and goal' },
+  { name: 'Change table', heading: '### 2. Change table' },
   { name: 'SOLID', heading: '### 3. SOLID' },
   { name: 'Pattern', heading: '### 4. Pattern' },
   { name: 'DSA', heading: '### 5. DSA' },
+  { name: 'Worked example', heading: '### 6. Worked example' },
+  { name: 'Open decisions', heading: '### 7. Open decisions' },
+  { name: 'Language explainer', heading: '### 8. Language explainer' },
 ]
+
+// The explainer is required only for a reader language and another language in the change
+// table (dry-run-check.ts). The count, the band and the status line leave it out.
+const OPTIONAL: SectionName = 'Language explainer'
+const REQUIRED = SECTIONS.filter(section => section.name !== OPTIONAL)
+export const SECTION_TOTAL = REQUIRED.length
 
 const CHOSEN = '**Chosen:**'
 const GOAL = '**Goal:**'
@@ -33,8 +51,16 @@ export type Choice = { name: string; why: string; note: string }
 export type LeetRow = { title: string; difficulty: 'E' | 'M' | 'H'; url: string }
 // One row of the SOLID table: the principle and why it is in play.
 export type Principle = { name: string; why: string }
+export type ChangeRow = { path: string; what: string; why: string; tag: 'new' | 'edit' }
+export type Example = { input: string; old: string; now: string }
+export type Decision = { text: string; isPick: boolean }
+export type Explainer = { rows: { construct: string; java: string }[]; flow: string }
 export type Card = {
   goal: string
+  changes: ChangeRow[]
+  example: Example
+  decisions: Decision[]
+  explainer: Explainer
   // The table rows, or the words of a section that has no table ("None at stake: ...").
   solid: { rows: Principle[]; note: string }
   pattern: Choice
@@ -101,20 +127,94 @@ function cellsOf(row: string): string[] {
     .filter(cell => cell !== '')
 }
 
-// The SOLID box: one row per principle of the table (header row skipped; columns are
-// principle, where, why), or the plain text when the section is not a table.
-function solidOf(body: string[]): Card['solid'] {
+// The data rows of a table. The first row is a header when a border or a separator line
+// follows it; a table with no separator has no header.
+function bodyRows(body: string[]): string[] {
   const rows = body.filter(line => isTableLine(line) && !isBorder(line))
-  if (rows.length === 0) {
+  const hasSeparator = body.some(line => isBorder(line))
+  return hasSeparator ? rows.slice(1) : rows
+}
+
+// The SOLID box: one row per principle of the table (columns are principle, where, why),
+// or the plain text when the section is not a table.
+function solidOf(body: string[]): Card['solid'] {
+  if (!body.some(isTableLine)) {
     return { rows: [], note: body.join(' ') }
   }
   return {
-    rows: rows.slice(1).map(row => {
+    rows: bodyRows(body).map(row => {
       const cells = cellsOf(row)
       return { name: cells[0] ?? '', why: cells[2] ?? '' }
     }),
     note: '',
   }
+}
+
+// One row per file of the change table: path, what changes, why.
+function changesOf(body: string[]): ChangeRow[] {
+  return bodyRows(body).map(row => {
+    const cells = cellsOf(row)
+    const what = cells[1] ?? ''
+    return { path: cells[0] ?? '', what, why: cells[2] ?? '', tag: what.toLowerCase().startsWith('new') ? 'new' : 'edit' }
+  })
+}
+
+// A line without its list mark and bold marks: "- **Old:** x" gives "Old: x".
+function plain(line: string): string {
+  return line.replace(/^([-*•]|\d+[.)])\s+/, '').split('**').join('').trim()
+}
+
+// The text after "label:" on the first line that starts with that label, or "".
+function labelled(body: string[], label: string): string {
+  for (const line of body) {
+    const text = plain(line)
+    if (text.toLowerCase().startsWith(`${label}:`)) {
+      return text.slice(label.length + 1).trim()
+    }
+  }
+  return ''
+}
+
+// The worked example: "Input:", "Old:" and "New:" lines, or one line "input → old → new".
+function exampleOf(body: string[]): Example {
+  const parts = body.map(line => plain(line).split('→').map(part => part.trim())).find(list => list.length >= 3)
+  const fromArrows = parts ?? ['', '', '']
+  return {
+    input: labelled(body, 'input') || (fromArrows[0] ?? ''),
+    old: labelled(body, 'old') || (fromArrows[1] ?? ''),
+    now: labelled(body, 'new') || fromArrows.slice(2).join(' → '),
+  }
+}
+
+// The option the "My pick: 1" or "Pick: A" line names, as an index, or -1.
+function pickIndexOf(body: string[]): number {
+  for (const line of body) {
+    const words = plain(line).toLowerCase()
+    const at = words.indexOf('pick:')
+    if (at >= 0) {
+      const mark = words.slice(at + 'pick:'.length).trim().replace('option', '').trim().charAt(0)
+      return /\d/.test(mark) ? Number(mark) - 1 : mark.charCodeAt(0) - 'a'.charCodeAt(0)
+    }
+  }
+  return -1
+}
+
+// The options of the open decisions: numbered or bulleted lines, two at most.
+function decisionsOf(body: string[]): Decision[] {
+  const pick = pickIndexOf(body)
+  return body
+    .filter(line => /^([-*•]|\d+[.)])\s+/.test(line))
+    .slice(0, 2)
+    .map((line, index) => ({ text: plain(line), isPick: index === pick }))
+}
+
+// The language explainer: a construct to equivalent table, then a "Flow:" line.
+function explainerOf(body: string[]): Explainer {
+  const rows = bodyRows(body).map(row => {
+    const cells = cellsOf(row)
+    return { construct: cells[0] ?? '', java: cells[1] ?? '' }
+  })
+  return { rows, flow: labelled(body, 'flow') }
 }
 
 // The first line after the "**Chosen:**" line that is not a Big-O or link line.
@@ -187,6 +287,10 @@ export function parseCard(text: string, names: Names | null): Card {
   const dsaName = valueAfter(dsaBody, CHOSEN)
   return {
     goal: valueAfter(body.get('Goal') ?? [], GOAL),
+    changes: changesOf(body.get('Change table') ?? []),
+    example: exampleOf(body.get('Worked example') ?? []),
+    decisions: decisionsOf(body.get('Open decisions') ?? []),
+    explainer: explainerOf(body.get('Language explainer') ?? []),
     solid: solidOf(body.get('SOLID') ?? []),
     pattern: { name: patternName, why: whyOf(patternBody), note: noteOf(patternName, names?.patterns, false) },
     dsa: {
@@ -200,17 +304,13 @@ export function parseCard(text: string, names: Names | null): Card {
   }
 }
 
-export function sectionPills(done: SectionName[]): { name: SectionName; isDone: boolean }[] {
-  return SECTIONS.map(section => ({ name: section.name, isDone: done.includes(section.name) }))
-}
-
 export type StatusInput = { gate: Gate; count: number; isRepo: boolean }
 
 // The UI status line: gate, count of sections done, and (repo) when the repo set the mode.
 export function statusLineText(input: StatusInput): string {
   const mark = input.gate === 'open' ? '✓' : '⊘'
   const repo = input.isRepo ? ' (repo)' : ''
-  return `${mark} dry-run ${input.gate}${repo} · ${input.count}/${SECTIONS.length}`
+  return `${mark} dry-run ${input.gate}${repo} · ${input.count}/${SECTION_TOTAL}`
 }
 
 export function repoUnlockLine(count: number): string {
@@ -220,7 +320,23 @@ export function repoUnlockLine(count: number): string {
   return count === 1 ? '1 repo-unlocked path' : `${count} repo-unlocked paths`
 }
 
-// How many boxes a dry run text fills. The names do not matter for a count.
+// How many required sections a dry run text fills. The names do not matter for a count.
 export function sectionCount(text: string): number {
-  return parseCard(text, null).done.length
+  return parseCard(text, null).done.filter(name => name !== OPTIONAL).length
+}
+
+// The folded boxes are kept as their names joined with commas.
+export function foldedNames(text: string): string[] {
+  return listOf(text)
+}
+
+export function toggleFold(text: string, name: string): string {
+  const names = foldedNames(text)
+  return (names.includes(name) ? names.filter(item => item !== name) : [...names, name]).join(',')
+}
+
+// Folds every shown box, or opens them all when they are all folded already.
+export function foldAll(text: string, shown: string[]): string {
+  const names = foldedNames(text)
+  return shown.every(name => names.includes(name)) ? '' : shown.join(',')
 }

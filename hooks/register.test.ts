@@ -1259,19 +1259,19 @@ function last<T>(items: T[]): T | undefined {
   return items[items.length - 1]
 }
 
-test('status line: locked with nothing, locked 4/4 after a dry run, open after go', async ($, on) => {
+test('status line: locked with nothing, locked 7/7 after a dry run, open after go', async ($, on) => {
   const { statuses } = stubEngine(on)
   await start($)
-  expect(last(statuses)).toBe('⊘ dry-run locked · 0/4')
+  expect(last(statuses)).toBe('⊘ dry-run locked · 0/7')
 
   await complete($, CARD_RUN)
-  expect(last(statuses)).toBe('⊘ dry-run locked · 4/4')
+  expect(last(statuses)).toBe('⊘ dry-run locked · 7/7')
 
   await submit($, 'go')
-  expect(last(statuses)).toBe('✓ dry-run open · 4/4')
+  expect(last(statuses)).toBe('✓ dry-run open · 7/7')
 
   await run($, 'stop')
-  expect(last(statuses)).toBe('⊘ dry-run locked · 4/4')
+  expect(last(statuses)).toBe('⊘ dry-run locked · 7/7')
 })
 
 test('status line: a clear forgets the dry run', async ($, on) => {
@@ -1281,12 +1281,12 @@ test('status line: a clear forgets the dry run', async ($, on) => {
 
   await $.session.end(sessionEnd('clear'))
 
-  expect(last(statuses)).toBe('⊘ dry-run locked · 0/4')
+  expect(last(statuses)).toBe('⊘ dry-run locked · 0/7')
 })
 
 test('status line: (repo) when the repo file set the mode, gone when off', async ($, on) => {
   const { statuses } = await startWithRepoFile('{ "mode": "on" }')($, on)
-  expect(last(statuses)).toBe('⊘ dry-run locked (repo) · 0/4')
+  expect(last(statuses)).toBe('⊘ dry-run locked (repo) · 0/7')
 
   await dryRun($, 'off')
   expect(last(statuses)).toBeUndefined()

@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { namesOf, parseCard, repoUnlockLine, sectionPills, statusLineText } from './design-card'
+import { foldAll, foldedNames, namesOf, parseCard, repoUnlockLine, sectionCount, statusLineText, toggleFold } from './design-card'
 
 // Written out here on purpose: the test must not share the mod's list.
 const NAMES = { patterns: ['Strategy', 'Observer'], dsa: ['Two pointers', 'Hash map / set lookup'] }
@@ -10,7 +10,12 @@ const DRY_RUN = [
   '**Bug:** none',
   '**Goal:** show the gate at a glance',
   '### 2. Change table',
-  '| a.ts | edit | why |',
+  '╔════════════════╦═════════════╦═══════════╗',
+  '║ File           ║ Change      ║ Why       ║',
+  '╠════════════════╬═════════════╬═══════════╣',
+  '║ hooks/a.ts     ║ new function ║ drops dupes ║',
+  '║ hooks/a.test.ts ║ 3 cases    ║ cover it  ║',
+  '╚════════════════╩═════════════╩═══════════╝',
   '### 3. SOLID',
   '╔═══════════╦═══════╦═════╗',
   '║ Principle ║ Where ║ Why ║',
@@ -28,12 +33,22 @@ const DRY_RUN = [
   'Two Sum · Easy · https://leetcode.com/problems/two-sum/',
   '3Sum · Medium · https://leetcode.com/problems/3sum/',
   '### 6. Worked example',
-  'x',
+  '- Input: [a, b, a]',
+  '- Old: keeps 3',
+  '- New: keeps 2',
   '### 7. Open decisions',
-  'y',
+  '1. Keep it a normal section. Go works anyway.',
+  '2. Make Go wait for the pick.',
+  'My pick: 1',
+  '### 8. Language explainer',
+  '| Construct | Java |',
+  '|---|---|',
+  '| set | HashSet |',
+  '| for x in xs | for (X x : xs) |',
+  'Flow: [a, b, a] gives [a, b].',
 ].join('\n')
 
-test('a dry run fills the four boxes', async () => {
+test('a dry run fills the boxes', async () => {
   const card = parseCard(DRY_RUN, NAMES)
   expect(card.goal).toBe('show the gate at a glance')
   expect(card.solid).toEqual({ rows: [{ name: 'Single Responsibility', why: 'one job' }], note: '' })
@@ -45,7 +60,16 @@ test('a dry run fills the four boxes', async () => {
   expect(card.dsa.name).toBe('Bloom filter')
   expect(card.dsa.why).toBe('Cheap membership test.')
   expect(card.dsa.bigO).toBe('O(1) per lookup.')
-  expect(card.done).toEqual(['Goal', 'SOLID', 'Pattern', 'DSA'])
+  expect(card.done).toEqual([
+    'Goal',
+    'Change table',
+    'SOLID',
+    'Pattern',
+    'DSA',
+    'Worked example',
+    'Open decisions',
+    'Language explainer',
+  ])
 })
 
 test('a SOLID section with no table keeps its words as a note', async () => {
@@ -85,19 +109,74 @@ test('no text gives an empty card', async () => {
   expect(parseCard('', NAMES).done).toEqual([])
 })
 
-test('section pills mark the done ones', async () => {
-  expect(sectionPills(['Goal', 'DSA'])).toEqual([
-    { name: 'Goal', isDone: true },
-    { name: 'SOLID', isDone: false },
-    { name: 'Pattern', isDone: false },
-    { name: 'DSA', isDone: true },
+test('the change table gives a row per file, new or edit', async () => {
+  expect(parseCard(DRY_RUN, NAMES).changes).toEqual([
+    { path: 'hooks/a.ts', what: 'new function', why: 'drops dupes', tag: 'new' },
+    { path: 'hooks/a.test.ts', what: '3 cases', why: 'cover it', tag: 'edit' },
   ])
 })
 
+test('a change table with no header row keeps its first row', async () => {
+  const text = ['### 2. Change table', '| a.ts | edit | why |'].join('\n')
+  expect(parseCard(text, NAMES).changes).toEqual([{ path: 'a.ts', what: 'edit', why: 'why', tag: 'edit' }])
+})
+
+test('the worked example reads input, old and new', async () => {
+  expect(parseCard(DRY_RUN, NAMES).example).toEqual({ input: '[a, b, a]', old: 'keeps 3', now: 'keeps 2' })
+})
+
+test('a worked example on one line is split at the arrows', async () => {
+  const text = ['### 6. Worked example', '[a, b, a] → keeps 3 → keeps 2'].join('\n')
+  expect(parseCard(text, NAMES).example).toEqual({ input: '[a, b, a]', old: 'keeps 3', now: 'keeps 2' })
+})
+
+test('open decisions give the options and mark the pick', async () => {
+  expect(parseCard(DRY_RUN, NAMES).decisions).toEqual([
+    { text: 'Keep it a normal section. Go works anyway.', isPick: true },
+    { text: 'Make Go wait for the pick.', isPick: false },
+  ])
+})
+
+test('open decisions that say none give no options', async () => {
+  const text = ['### 7. Open decisions', 'none'].join('\n')
+  const card = parseCard(text, NAMES)
+  expect(card.decisions).toEqual([])
+  expect(card.done).toEqual(['Open decisions'])
+})
+
+test('the language explainer gives the construct table and the flow', async () => {
+  expect(parseCard(DRY_RUN, NAMES).explainer).toEqual({
+    rows: [
+      { construct: 'set', java: 'HashSet' },
+      { construct: 'for x in xs', java: 'for (X x : xs)' },
+    ],
+    flow: '[a, b, a] gives [a, b].',
+  })
+})
+
+test('the count is the required sections written, not the explainer', async () => {
+  expect(sectionCount(DRY_RUN)).toBe(7)
+  expect(sectionCount(['### 1. Bug and goal', '**Goal:** x'].join('\n'))).toBe(1)
+  expect(sectionCount(['### 8. Language explainer', 'Flow: x'].join('\n'))).toBe(0)
+})
+
+test('folding a box adds its name, folding it again removes it', async () => {
+  expect(toggleFold('', 'Goal')).toBe('Goal')
+  expect(toggleFold('Goal', 'DSA')).toBe('Goal,DSA')
+  expect(toggleFold('Goal,DSA', 'Goal')).toBe('DSA')
+  expect(foldedNames('Goal,DSA')).toEqual(['Goal', 'DSA'])
+  expect(foldedNames('')).toEqual([])
+})
+
+test('fold all folds every shown box, and a second press opens them', async () => {
+  expect(foldAll('Goal', ['Goal', 'SOLID'])).toBe('Goal,SOLID')
+  expect(foldAll('Goal,SOLID', ['Goal', 'SOLID'])).toBe('')
+})
+
 test('the status line names the gate, the count and the repo', async () => {
-  expect(statusLineText({ gate: 'locked', count: 3, isRepo: false })).toBe('⊘ dry-run locked · 3/4')
-  expect(statusLineText({ gate: 'open', count: 4, isRepo: false })).toBe('✓ dry-run open · 4/4')
-  expect(statusLineText({ gate: 'open', count: 4, isRepo: true })).toBe('✓ dry-run open (repo) · 4/4')
+  expect(statusLineText({ gate: 'locked', count: 3, isRepo: false })).toBe('⊘ dry-run locked · 3/7')
+  expect(statusLineText({ gate: 'open', count: 7, isRepo: false })).toBe('✓ dry-run open · 7/7')
+  expect(statusLineText({ gate: 'open', count: 7, isRepo: true })).toBe('✓ dry-run open (repo) · 7/7')
 })
 
 test('the repo-unlock line counts the paths', async () => {
