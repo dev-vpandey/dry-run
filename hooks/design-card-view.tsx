@@ -110,7 +110,7 @@ function bandTree(els: Els, view: View): ReturnType<Els['Box']> {
       <Text color={t.claude}>✻ </Text>
       <Text bold color={t.fg}>dry-run </Text>
       {pillOf(els, gate.label, gate.color, gate.bg)}
-      {count === 0 ? <Text color={t.dim}>{` ◇ ${label} `}</Text> : pillOf(els, `◆ ${label}`, t.claude, t.claudeBg)}
+      {count === 0 ? <Text color={t.amber}>{` ◇ ${label} `}</Text> : pillOf(els, `◆ ${label}`, t.claude, t.claudeBg)}
     </Box>
   )
 }
@@ -163,7 +163,7 @@ function paneTree($: EngineInterface, els: Els, view: View, card: Card, width: n
           </Button>
           <Text color={color}>{`${'─'.repeat(topFill(title, width))}╮`}</Text>
         </Box>
-        {(isFolded ? [text('…', t.faint)] : rows).map(row => (
+        {(isFolded ? [text('…', color)] : rows).map(row => (
           <Box>
             <Text color={color}>│ </Text>
             <Box width={inner}>{row}</Box>
@@ -182,9 +182,9 @@ function paneTree($: EngineInterface, els: Els, view: View, card: Card, width: n
         return [
           <Box>
             {pill(row.name, t.term, t.claude)}
-            {text(` ${first}`, t.dim)}
+            {text(` ${first}`, t.fg)}
           </Box>,
-          ...rest.map(line => text(line, t.dim)),
+          ...rest.map(line => text(line, t.fg)),
         ]
       })
   const changes = card.changes.length === 0
@@ -194,12 +194,12 @@ function paneTree($: EngineInterface, els: Els, view: View, card: Card, width: n
           {pill(row.tag, t.term, row.tag === 'new' ? t.green : t.amber)}
           <Text color={t.blue} bold>{` ${row.path}`}</Text>
         </Box>,
-        ...wrapped(`${row.what} · ${row.why}`, t.dim),
+        ...wrapped(`${row.what} · ${row.why}`, t.fg),
       ])
   const example = card.example.input === '' && card.example.old === ''
     ? [text(dash, t.fg)]
     : [
-        ...wrapped(card.example.input, t.dim),
+        ...wrapped(card.example.input, t.blue),
         <Box>
           <Text color={t.red} bold>{'old → '}</Text>
           {text(card.example.old, t.fg)}
@@ -210,13 +210,13 @@ function paneTree($: EngineInterface, els: Els, view: View, card: Card, width: n
         </Box>,
       ]
   const decisions = card.decisions.length === 0
-    ? [text(card.done.includes('Open decisions') ? 'none' : dash, t.dim)]
+    ? [text(card.done.includes('Open decisions') ? 'none' : dash, t.fg)]
     : card.decisions.flatMap((decision, index) => {
         const mark = decision.isPick ? '★ pick' : '○'
         const [first = '', ...rest] = wrapWords(`${'AB'.charAt(index)}. ${decision.text}`, inner - mark.length - 3, inner)
         return [
           <Box>
-            {decision.isPick ? pill(mark, t.amber, t.amberBg) : text(`${mark} `, t.dim)}
+            {decision.isPick ? pill(mark, t.amber, t.amberBg) : text(`${mark} `, t.fg)}
             {text(` ${first}`, t.fg)}
           </Box>,
           ...rest.map(line => text(line, t.fg)),
@@ -226,11 +226,11 @@ function paneTree($: EngineInterface, els: Els, view: View, card: Card, width: n
     ...card.explainer.rows.map(row => (
       <Box>
         <Text color={t.blue}>{row.construct}</Text>
-        <Text color={t.faint}>{' → '}</Text>
+        <Text color={t.claude}>{' → '}</Text>
         <Text color={t.green}>{row.java}</Text>
       </Box>
     )),
-    ...wrapped(card.explainer.flow === '' ? '' : `Flow: ${card.explainer.flow}`, t.dim),
+    ...wrapped(card.explainer.flow === '' ? '' : `Flow: ${card.explainer.flow}`, t.violet),
   ]
   const isAllFolded = shown.every(name => view.folded.includes(name))
   // Go stays above the boxes: the pane is taller than a short screen, and Go must stay in view.
@@ -238,11 +238,11 @@ function paneTree($: EngineInterface, els: Els, view: View, card: Card, width: n
     <Box flexDirection="column">
       <Box flexDirection="column">
         {clawdRows(view.gate).map(row => <Text color={t.claude}>{row}</Text>)}
-        <Text color={t.dim}>{CAPTIONS.get(view.gate) ?? ''}</Text>
+        <Text color={t.claudeHi}>{CAPTIONS.get(view.gate) ?? ''}</Text>
       </Box>
       <Box>
         <Text bold color={t.fg}>dry-run</Text>
-        <Text color={t.dim}>{' · Design Card  '}</Text>
+        <Text color={t.claudeHi}>{' · Design Card  '}</Text>
         <Button
           key="fold-all"
           plain
@@ -261,10 +261,10 @@ function paneTree($: EngineInterface, els: Els, view: View, card: Card, width: n
         ) : view.isWaiting ? (
           <Box>
             <Button key="go" label="▶ Go [g]" hotkey="g" variant="primary" onPress={() => openGate($, false)} />
-            {text(' or type /go · "go ahead"', t.dim)}
+            {text(' or type /go · "go ahead"', t.fg)}
           </Box>
         ) : (
-          text('▶ Go [g] needs a dry run', t.dim)
+          text('▶ Go [g] needs a dry run', t.amber)
         )}
       </Box>
       {section('Goal', t.fg, wrapped(card.goal === '' ? dash : card.goal, t.fg))}
@@ -272,11 +272,14 @@ function paneTree($: EngineInterface, els: Els, view: View, card: Card, width: n
       {section('SOLID', t.claude, solid)}
       {section('Pattern', t.violet, [
         nameRow(card.pattern.name, t.violet, t.violetBg),
-        ...[card.pattern.note, card.pattern.why].filter(line => line !== '').flatMap(line => wrapped(line, t.dim)),
+        ...(card.pattern.note === '' ? [] : wrapped(card.pattern.note, t.amber)),
+        ...(card.pattern.why === '' ? [] : wrapped(card.pattern.why, t.fg)),
       ])}
       {section('DSA', t.blue, [
         nameRow(card.dsa.name, t.blue, t.blueBg),
-        ...[card.dsa.note, card.dsa.why, card.dsa.bigO].filter(line => line !== '').flatMap(line => wrapped(line, t.dim)),
+        ...(card.dsa.note === '' ? [] : wrapped(card.dsa.note, t.amber)),
+        ...(card.dsa.why === '' ? [] : wrapped(card.dsa.why, t.fg)),
+        ...(card.dsa.bigO === '' ? [] : wrapped(card.dsa.bigO, t.green)),
         ...card.dsa.rows.map(row => (
           <Box>
             <Text color={t.blue}>○ </Text>
@@ -288,13 +291,17 @@ function paneTree($: EngineInterface, els: Els, view: View, card: Card, width: n
       {section('Worked example', t.fg, example)}
       {section('Open decisions', t.amber, decisions)}
       {card.done.includes('Language explainer') && section('Language explainer', t.violet, explainer)}
-      {view.unlocked > 0 && text(repoUnlockLine(view.unlocked), t.dim)}
+      {view.unlocked > 0 && text(repoUnlockLine(view.unlocked), t.amber)}
     </Box>
   )
 }
 
 // The pane is opened by register.ts at session start: the engine takes one session.start hook.
 export const register: Register = on => {
+  // A box title folds its box when pressed. The focus ring would also invert it, a colored
+  // block the person did not ask for, so the ring never lands on a title. Go and /stop keep it.
+  on('ui.focus', { requestId: PANE_ID }, ($, e, next) => (e.element?.startsWith('fold-') ? {} : next(e)))
+
   // Not drawn while the mod is off, and the engine leaves VS Code without a band.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const view = await viewOf($)

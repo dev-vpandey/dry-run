@@ -218,7 +218,7 @@ test('the band progress pill is the Claude color on a tint', async ($, on) => {
   expect(title?.props.bold).toBe(true)
 })
 
-test('the pane puts each name in a pill and keeps its why dim', async ($, on) => {
+test('the pane puts each name in a pill and keeps its why in plain text color', async ($, on) => {
   seedState(on, { text: DRY_RUN })
 
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
@@ -230,8 +230,8 @@ test('the pane puts each name in a pill and keeps its why dim', async ($, on) =>
 
   expect(solid?.props.backgroundColor).toBe(DARK.claude)
   expect(pattern?.props.backgroundColor).toBe(DARK.violetBg)
-  expect(why?.props.color).toBe(DARK.dim)
-  expect(bigO?.props.color).toBe(DARK.dim)
+  expect(why?.props.color).toBe(DARK.fg)
+  expect(bigO?.props.color).toBe(DARK.green)
 })
 
 test('a LeetCode row has a blue mark and a level colored by difficulty', async ($, on) => {
@@ -246,14 +246,14 @@ test('a LeetCode row has a blue mark and a level colored by difficulty', async (
   expect(level?.props.color).toBe(DARK.green)
 })
 
-test('the title is bold and Design Card is dim', async ($, on) => {
+test('the title is bold and Design Card is in the light Claude color', async ($, on) => {
   seedState(on, {})
 
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   const name = await ui.find({ type: 'Text', text: /Design Card/ })
   await ui.unmount()
 
-  expect(name?.props.color).toBe(DARK.dim)
+  expect(name?.props.color).toBe(DARK.claudeHi)
 })
 
 test('Go has a hint for the other ways to approve', async ($, on) => {
