@@ -6,6 +6,7 @@
 // and names built by the shell (`f=foo; echo x > "$f.py"`).
 
 import { isLocked } from './gate-path'
+import type { LockRules } from './gate-path'
 
 // A runner executes a script. A locked name after it means "run", not "write".
 // Only a `>` target counts in a part that starts with a runner.
@@ -53,24 +54,24 @@ function stripWrappers(word: string): string {
 
 // True when this word is a locked file. A word built by the shell (`$f.py`)
 // is a known gap, so it is not named. A word that is no path, like ".", is not locked.
-function isLockedWord(word: string, home: string): boolean {
+function isLockedWord(word: string, home: string, rules?: LockRules): boolean {
   if (word.includes('$')) {
     return false
   }
   try {
-    return isLocked(word, home)
+    return isLocked(word, home, rules)
   } catch {
     return false
   }
 }
 
 // True when one part of the command names a locked file in a way that writes.
-function partNamesLocked(part: string, home: string): boolean {
+function partNamesLocked(part: string, home: string, rules?: LockRules): boolean {
   const words = splitWords(part)
   const isRunner = words.length > 0 && RUNNERS.has(words[0])
   for (let i = 0; i < words.length; i++) {
     const isTarget = i > 0 && words[i - 1] === '>'
-    if ((isTarget || !isRunner) && isLockedWord(words[i], home)) {
+    if ((isTarget || !isRunner) && isLockedWord(words[i], home, rules)) {
       return true
     }
   }
@@ -86,10 +87,10 @@ function requireCommand(command: unknown): string {
 }
 
 // True when the command names a locked file. Throws when there is no command.
-// `home` is the user's home folder, "" when unknown.
-export function namesLockedFile(command: unknown, home: string = ''): boolean {
+// `home` is the user's home folder, "" when unknown. `rules` come from the repo file.
+export function namesLockedFile(command: unknown, home: string = '', rules?: LockRules): boolean {
   for (const part of splitParts(requireCommand(command))) {
-    if (partNamesLocked(part, home)) {
+    if (partNamesLocked(part, home, rules)) {
       return true
     }
   }

@@ -17,6 +17,16 @@ const LOCKED_ENDINGS = new Set([
   '.ipynb',
 ])
 
+// What a repo file adds to the path check (see repo-file.ts). `lock` and `unlock`
+// hold lower-case endings (".yaml") and repo folders ("generated/").
+// `relativeNames` gives the names of a path counted from the git root, file name
+// last, or null when the path is outside the repo or there is no git root.
+export type LockRules = {
+  lock: string[]
+  unlock: string[]
+  relativeNames: (path: string) => string[] | null
+}
+
 // A run of folder names, for example ['.scratch'].
 type Run = string[]
 
@@ -109,9 +119,28 @@ function endingOf(fileName: string): string {
   return fileName.slice(dot).toLowerCase()
 }
 
+// True when `unlock` frees this path: its ending, or a repo folder above it.
+function isUnlocked(path: string, ending: string, rules: LockRules): boolean {
+  if (rules.unlock.includes(ending)) {
+    return true
+  }
+  const names = rules.relativeNames(path)
+  if (names === null) {
+    return false
+  }
+  const folders = names.slice(0, -1)
+  for (const item of rules.unlock) {
+    if (item.endsWith('/') && startsWithRun(folders, splitPath(item))) {
+      return true
+    }
+  }
+  return false
+}
+
 // True when the gate must lock this path. Throws when the input is not a path.
 // `home` is the user's home folder. "" means unknown, so no plans folder is free.
-export function isLocked(path: unknown, home: string = ''): boolean {
+// `rules` come from the repo file. Free places beat them, then `unlock`, then `lock`.
+export function isLocked(path: unknown, home: string = '', rules?: LockRules): boolean {
   if (typeof path !== 'string' || path.trim() === '') {
     throw new Error('gate: no file path in the tool call')
   }
@@ -123,5 +152,9 @@ export function isLocked(path: unknown, home: string = ''): boolean {
   if (isFreeFolder(names, home)) {
     return false
   }
-  return LOCKED_ENDINGS.has(endingOf(fileName))
+  const ending = endingOf(fileName)
+  if (rules !== undefined && isUnlocked(path, ending, rules)) {
+    return false
+  }
+  return LOCKED_ENDINGS.has(ending) || (rules !== undefined && rules.lock.includes(ending))
 }

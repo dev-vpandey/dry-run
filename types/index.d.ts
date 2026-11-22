@@ -9,6 +9,15 @@ declare module 'claude-code' {
       isSessionSet: boolean
       cwd: string
       gitRoot: string
+      isSoft: boolean
+      isTooOld: boolean
+      // The parsed repo file and its platform block, as JSON text ("" when none).
+      repoFile: string
+      platform: string
+      // The gate-down toast was shown this session.
+      isGateToastShown: boolean
+      // The problem toasts last shown, so a second /clear signal does not repeat them.
+      lastProblems: string
     }
   }
 }

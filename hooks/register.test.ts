@@ -14,13 +14,23 @@ function run($: any, command: string) {
 const EDIT_LOCKED = { tool: 'Edit', file_path: 'src/Foo.py', old_string: 'a', new_string: 'b' } as const
 const EDIT_FREE = { tool: 'Edit', file_path: 'README.md', old_string: 'a', new_string: 'b' } as const
 
-type Stubs = { version?: string; refuseCommand?: string; home?: string; gitRoot?: string; existsThrows?: boolean }
+type Stubs = {
+  version?: string
+  refuseCommand?: string
+  home?: string
+  gitRoot?: string
+  existsThrows?: boolean
+  // The text of `<gitRoot>/.claude/dry-run.json`. Undefined means the file is not there.
+  repoFile?: string
+  readThrows?: boolean
+}
 
 // Each hook here stands for the engine, beneath the mod.
 // The mod forwards each of these events with next(e), so each needs a stub.
 function stubEngine(on: any, stubs: Stubs = {}) {
   const toasts: string[] = []
   const registered: string[] = []
+  const reads: string[] = []
   on('session.start', (_: unknown, e: { cwd: string }) => ({ cwd: e.cwd }))
   on('session.version', () => ({ value: { version: stubs.version ?? '2.1.326' } }))
   on('command.register', (_: unknown, e: { name: string }) => {
@@ -43,13 +53,22 @@ function stubEngine(on: any, stubs: Stubs = {}) {
     if (stubs.existsThrows) {
       return { deny: 'disk error' }
     }
-    return { value: stubs.gitRoot !== undefined && e.path === stubs.gitRoot + '/.git' }
+    const isGit = stubs.gitRoot !== undefined && e.path === stubs.gitRoot + '/.git'
+    const isRepoFile = stubs.repoFile !== undefined && e.path === stubs.gitRoot + '/.claude/dry-run.json'
+    return { value: isGit || isRepoFile }
+  })
+  on('fs.read', (_: unknown, e: { path: string }) => {
+    reads.push(e.path)
+    if (stubs.readThrows) {
+      return { deny: 'disk error' }
+    }
+    return { value: stubs.repoFile ?? '' }
   })
   on('tool.call', () => ({ result: {} }))
   on('tool.check', () => ({ decision: 'allow', reason: 'stub' }))
   on('prompt.submit', (_: unknown, e: { text: string }) => ({ text: e.text }))
   on('turn.complete', (_: unknown, e: { answer: string }) => ({ text: e.answer }))
-  return { toasts, registered }
+  return { toasts, registered, reads }
 }
 
 async function start($: any, cwd: string = '/') {
@@ -596,4 +615,220 @@ test('fail closed: before any session.start the switch file is locked by its end
   stubEngine(on)
 
   expect(await $.tool.call(SWITCH as never)).toEqual({ deny: DENY_TEXT })
+})
+
+// ---- repo file (ticket 25) ----
+
+const GATE_DOWN_SOFT = 'Repo sets dry-run mod: soft. `/dry-run on` to lock.'
+const GATE_DOWN_OFF = 'Repo sets dry-run mod: off. `/dry-run on` to lock.'
+
+function startWithRepoFile(text: string, stubs: Stubs = {}) {
+  return async ($: any, on: any) => {
+    const seen = stubEngine(on, { gitRoot: '/repo', repoFile: text, ...stubs })
+    await start($, '/repo/src')
+    return seen
+  }
+}
+
+test('repo file soft: no gate, source repo, one gate-down toast', async ($, on) => {
+  const { toasts } = await startWithRepoFile('{ "mode": "soft" }')($, on)
+
+  expect(await $.tool.call(EDIT_LOCKED)).toEqual({ result: {} })
+  expect((await dryRun($, '')).text).toBe('dry-run mod: soft (source: repo). No gate.')
+  expect(toasts).toEqual([GATE_DOWN_SOFT])
+})
+
+test('repo file soft: dry runs still count, so a go word is still understood', async ($, on) => {
+  await startWithRepoFile('{ "mode": "soft" }')($, on)
+
+  expect(await submit($, 'go')).toEqual({ drop: 'no dry run to approve' })
+  await complete($, DRY_RUN)
+  expect(await submit($, 'go')).toEqual({ text: 'go' })
+})
+
+test('repo file off: no dry runs, no gate, but the switch file stays locked', async ($, on) => {
+  const { toasts } = await startWithRepoFile('{ "mode": "off" }')($, on)
+
+  expect(await $.tool.call(EDIT_LOCKED)).toEqual({ result: {} })
+  expect(await $.tool.call(SWITCH)).toEqual({ deny: DENY_TEXT })
+  expect((await dryRun($, '')).text).toBe('dry-run mod: off (source: repo).')
+  expect(toasts).toEqual([GATE_DOWN_OFF])
+})
+
+test('repo file on: gate locked, source repo, no gate-down toast', async ($, on) => {
+  const { toasts } = await startWithRepoFile('{ "mode": "on" }')($, on)
+
+  expect(await $.tool.call(EDIT_LOCKED)).toEqual({ deny: DENY_TEXT })
+  expect((await dryRun($, '')).text).toBe('dry-run mod: on (source: repo). Gate locked.')
+  expect(toasts).toEqual([])
+})
+
+test('no repo file: source default, nothing read, no toast', async ($, on) => {
+  const { toasts, reads } = await startWithRepoFile('', { repoFile: undefined })($, on)
+
+  expect((await dryRun($, '')).text).toBe('dry-run mod: on (source: default). Gate locked.')
+  expect(reads).toEqual([])
+  expect(toasts).toEqual([])
+})
+
+test('repo soft: /dry-run on locks the gate and wins, /dry-run off frees it', async ($, on) => {
+  await startWithRepoFile('{ "mode": "soft" }')($, on)
+
+  expect((await dryRun($, 'on')).text).toBe('dry-run mod: on (source: session). Gate locked.')
+  expect(await $.tool.call(EDIT_LOCKED)).toEqual({ deny: DENY_TEXT })
+  await dryRun($, 'off')
+  expect(await $.tool.call(EDIT_LOCKED)).toEqual({ result: {} })
+})
+
+test('repo off: /dry-run on locks the gate and wins', async ($, on) => {
+  await startWithRepoFile('{ "mode": "off" }')($, on)
+
+  await dryRun($, 'on')
+  expect(await $.tool.call(EDIT_LOCKED)).toEqual({ deny: DENY_TEXT })
+})
+
+test('repo on: /dry-run off frees the gate and wins', async ($, on) => {
+  await startWithRepoFile('{ "mode": "on" }')($, on)
+
+  expect((await dryRun($, 'off')).text).toBe('dry-run mod: off (source: session).')
+  expect(await $.tool.call(EDIT_LOCKED)).toEqual({ result: {} })
+})
+
+test('repo file lock and unlock feed the path check, for Edit and for Bash', async ($, on) => {
+  const text = '{ "lock": [".yaml"], "unlock": ["generated/", ".sql"] }'
+  const { toasts } = await startWithRepoFile(text)($, on)
+  const edit = (file_path: string) => $.tool.call({ tool: 'Edit', file_path, old_string: 'a', new_string: 'b' } as never)
+  const bash = (command: string) => $.tool.check({ tool: 'Bash', input: { command } } as never)
+
+  expect(await edit('/repo/ci.yaml')).toEqual({ deny: DENY_TEXT })
+  expect(await edit('/repo/generated/a.py')).toEqual({ result: {} })
+  expect(await edit('/repo/db/q.sql')).toEqual({ result: {} })
+  expect(await edit('/repo/src/a.py')).toEqual({ deny: DENY_TEXT })
+  expect(await bash('echo x > /repo/ci.yaml')).toEqual({ decision: 'deny', reason: DENY_TEXT })
+  expect(await bash('echo x > /repo/generated/a.py')).toEqual({ decision: 'allow', reason: 'stub' })
+  // Any unlock is a gate-down toast, even with mode on.
+  expect(toasts).toEqual(['Repo sets dry-run mod: on. `/dry-run on` to lock.'])
+})
+
+test('repo unlock cannot free the switch file', async ($, on) => {
+  const { toasts } = await startWithRepoFile('{ "unlock": [".claude/dry-run.json", ".json", ".claude/"] }')($, on)
+
+  expect(await $.tool.call(SWITCH)).toEqual({ deny: DENY_TEXT })
+  expect(toasts.some(t => t.includes('.claude/dry-run.json'))).toBe(true)
+})
+
+test('repo unlock items with .. or absolute paths are ignored, and a toast names them', async ($, on) => {
+  const { toasts } = await startWithRepoFile('{ "unlock": ["../x/", "/etc/", "gen/"] }')($, on)
+
+  expect(toasts.filter(t => t.includes('../x/')).length).toBe(1)
+  expect(toasts.filter(t => t.includes('/etc/')).length).toBe(1)
+  expect(await $.tool.call({ tool: 'Edit', file_path: '/repo/gen/a.py', old_string: 'a', new_string: 'b' } as never)).toEqual({ result: {} })
+  expect(await $.tool.call({ tool: 'Edit', file_path: '/x/a.py', old_string: 'a', new_string: 'b' } as never)).toEqual({ deny: DENY_TEXT })
+})
+
+const BAD_REPO_FILES: [string, string][] = [
+  ['bad JSON', '{ "mode": '],
+  ['an unknown key', '{ "mod": "off" }'],
+]
+
+for (const [name, text] of BAD_REPO_FILES) {
+  test(`bad repo file (${name}): ignored whole, mode on, one toast`, async ($, on) => {
+    const { toasts } = await startWithRepoFile(text)($, on)
+
+    expect(await $.tool.call(EDIT_LOCKED)).toEqual({ deny: DENY_TEXT })
+    expect((await dryRun($, '')).text).toBe('dry-run mod: on (source: default). Gate locked.')
+    expect(toasts.length).toBe(1)
+    expect(toasts[0]).toContain('Repo file ignored')
+  })
+}
+
+test('a bad platform shape ignores only platform, with a toast', async ($, on) => {
+  const { toasts } = await startWithRepoFile('{ "mode": "soft", "platform": { "agent": 1 } }')($, on)
+
+  expect((await dryRun($, '')).text).toBe('dry-run mod: soft (source: repo). No gate.')
+  expect(toasts.some(t => t.includes('platform'))).toBe(true)
+})
+
+test('a repo file that cannot be read: ignored, mode on, a toast', async ($, on) => {
+  const { toasts } = await startWithRepoFile('{ "mode": "off" }', { readThrows: true })($, on)
+
+  expect(await $.tool.call(EDIT_LOCKED)).toEqual({ deny: DENY_TEXT })
+  expect(toasts.length).toBe(1)
+  expect(toasts[0]).toContain('Repo file')
+})
+
+test('no git root: no repo file is read', async ($, on) => {
+  const { reads } = stubEngine(on, { repoFile: '{ "mode": "off" }' })
+  await start($, '/work')
+
+  expect(await $.tool.call(EDIT_LOCKED)).toEqual({ deny: DENY_TEXT })
+  expect(reads).toEqual([])
+})
+
+test('only the git-root file is read, never one in a parent or sub folder', async ($, on) => {
+  const { reads } = await startWithRepoFile('{}')($, on)
+
+  expect(reads).toEqual(['/repo/.claude/dry-run.json'])
+})
+
+test('the file is read again after /clear: new rules apply, session choice stays', async ($, on) => {
+  const stubs: Stubs = { gitRoot: '/repo', repoFile: '{ "mode": "soft" }' }
+  const { toasts } = stubEngine(on, stubs)
+  await start($, '/repo/src')
+  expect(await $.tool.call(EDIT_LOCKED)).toEqual({ result: {} })
+
+  stubs.repoFile = '{ "mode": "on" }'
+  await $.session.end({ reason: 'clear' })
+  expect(await $.tool.call(EDIT_LOCKED)).toEqual({ deny: DENY_TEXT })
+  expect(toasts).toEqual([GATE_DOWN_SOFT])
+
+  await dryRun($, 'off')
+  stubs.repoFile = '{ "mode": "on", "lock": [".yaml"] }'
+  await $.session.end({ reason: 'clear' })
+  expect(await $.tool.call(EDIT_LOCKED)).toEqual({ result: {} })
+  expect(await $.tool.call({ tool: 'Edit', file_path: '/repo/a.yaml', old_string: 'a', new_string: 'b' } as never)).toEqual({ result: {} })
+})
+
+test('both /clear signals together show a bad-file toast once', async ($, on) => {
+  const stubs: Stubs = { gitRoot: '/repo', repoFile: '{}' }
+  const { toasts } = stubEngine(on, stubs)
+  await start($, '/repo/src')
+
+  stubs.repoFile = '{ "mod": 1 }'
+  await $.session.end({ reason: 'clear' })
+  await $.classic.SessionStart({ source: 'clear' })
+
+  expect(toasts.length).toBe(1)
+})
+
+test('the gate-down toast shows once per session, and again in the next session', async ($, on) => {
+  const stubs: Stubs = { gitRoot: '/repo', repoFile: '{ "mode": "soft" }' }
+  const { toasts } = stubEngine(on, stubs)
+  await start($, '/repo/src')
+  await $.session.end({ reason: 'clear' })
+  await $.classic.SessionStart({ source: 'clear' })
+  expect(toasts).toEqual([GATE_DOWN_SOFT])
+
+  await start($, '/repo/src')
+  expect(toasts).toEqual([GATE_DOWN_SOFT, GATE_DOWN_SOFT])
+})
+
+test('an engine below the floor stays off: the repo file is not read', async ($, on) => {
+  const { reads } = await startWithRepoFile('{ "mode": "on" }', { version: '2.1.300' })($, on)
+
+  expect(reads).toEqual([])
+  expect(await $.tool.call(EDIT_LOCKED)).toEqual({ result: {} })
+  await $.session.end({ reason: 'clear' })
+  expect(await $.tool.call(EDIT_LOCKED)).toEqual({ result: {} })
+})
+
+test('an engine below the floor: /clear reads no repo file and shows no repo toast', async ($, on) => {
+  const { reads, toasts } = await startWithRepoFile('{ "mode": "off", "unlock": [".sql"] }', { version: '2.1.300' })($, on)
+
+  await $.session.end({ reason: 'clear' })
+  await $.classic.SessionStart({ source: 'clear' })
+
+  expect(reads).toEqual([])
+  expect(toasts.length).toBe(1)
+  expect(toasts[0]).toContain('needs Claude Code')
 })

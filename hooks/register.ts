@@ -2,6 +2,9 @@ import type { Args, EngineInterface, Next, Register } from 'claude-code'
 import { namesLockedFile, namesSwitchFile } from './bash-scan'
 import { isDryRun } from './dry-run-check'
 import { isLocked } from './gate-path'
+import type { LockRules } from './gate-path'
+import { emptyRepoFile, lockRulesFor, parseRepoFile } from './repo-file'
+import type { ParseResult, RepoFile } from './repo-file'
 import { goWordKind } from './go-word'
 import { candidateRoots, isSwitchFile, UNKNOWN_ROOT } from './switch-file'
 import { isOlderThan } from './version'
@@ -27,6 +30,18 @@ const IS_SESSION_SET = { plugin: 'dry-run', key: 'isSessionSet' } as const
 // The working folder of the session, and the git root found from it ("" when none).
 const CWD = { plugin: 'dry-run', key: 'cwd' } as const
 const GIT_ROOT = { plugin: 'dry-run', key: 'gitRoot' } as const
+
+// The repo file set `soft`: dry runs, no gate. The person's /dry-run on clears it.
+const IS_SOFT = { plugin: 'dry-run', key: 'isSoft' } as const
+// The engine is older than the floor. The mod stays off, whatever the repo file says.
+const IS_TOO_OLD = { plugin: 'dry-run', key: 'isTooOld' } as const
+// The parsed repo file as JSON text, and its platform block (for ticket 34).
+const REPO_FILE = { plugin: 'dry-run', key: 'repoFile' } as const
+const PLATFORM = { plugin: 'dry-run', key: 'platform' } as const
+const IS_GATE_TOAST_SHOWN = { plugin: 'dry-run', key: 'isGateToastShown' } as const
+const LAST_PROBLEMS = { plugin: 'dry-run', key: 'lastProblems' } as const
+
+const REPO_FILE_PATH = '/.claude/dry-run.json'
 
 const GO_NAME = 'go'
 const DRY_RUN_NAME = 'dry-run'
@@ -56,6 +71,35 @@ async function isWaiting($: EngineInterface): Promise<boolean> {
   return read.value === true
 }
 
+async function isSoft($: EngineInterface): Promise<boolean> {
+  const read = await $.state.get(IS_SOFT)
+  return read.value === true
+}
+
+async function isTooOld($: EngineInterface): Promise<boolean> {
+  const read = await $.state.get(IS_TOO_OLD)
+  return read.value === true
+}
+
+async function isGateToastShown($: EngineInterface): Promise<boolean> {
+  const read = await $.state.get(IS_GATE_TOAST_SHOWN)
+  return read.value === true
+}
+
+// The repo file of this session. A file never read, or text that does not parse,
+// gives the defaults.
+async function repoFileOf($: EngineInterface): Promise<RepoFile> {
+  const read = await $.state.get(REPO_FILE)
+  if (typeof read.value !== 'string' || read.value === '') {
+    return emptyRepoFile()
+  }
+  try {
+    return JSON.parse(read.value) as RepoFile
+  } catch {
+    return emptyRepoFile()
+  }
+}
+
 async function isSessionSet($: EngineInterface): Promise<boolean> {
   const read = await $.state.get(IS_SESSION_SET)
   return read.value === true
@@ -77,6 +121,11 @@ async function switchFileCheck($: EngineInterface): Promise<(word: unknown) => b
   const cwd = await cwdOf($)
   const gitRoot = await gitRootOf($)
   return word => isSwitchFile(word, cwd, gitRoot)
+}
+
+// The path check rules from the repo file of this session.
+async function lockRulesOf($: EngineInterface): Promise<LockRules> {
+  return lockRulesFor(await repoFileOf($), await cwdOf($), await gitRootOf($))
 }
 
 // The first folder, from the working folder up, that holds a `.git` entry.
@@ -118,11 +167,11 @@ async function homeDir($: EngineInterface): Promise<string> {
 // A bad path throws even when the mod is off: fail closed.
 async function mustDeny($: EngineInterface, path: unknown): Promise<boolean> {
   const isSwitch = (await switchFileCheck($))(path)
-  const isLockedFile = isLocked(path, await homeDir($))
+  const isLockedFile = isLocked(path, await homeDir($), await lockRulesOf($))
   if (isSwitch) {
     return !(await isOpen($))
   }
-  if ((await isOff($)) || !isLockedFile) {
+  if ((await isOff($)) || (await isSoft($)) || !isLockedFile) {
     return false
   }
   return !(await isOpen($))
@@ -144,10 +193,10 @@ async function mustDenyBash($: EngineInterface, e: Args<'tool.check'>): Promise<
   if (namesSwitchFile(command, await switchFileCheck($))) {
     return !(await isOpen($))
   }
-  if (await isOff($)) {
+  if ((await isOff($)) || (await isSoft($))) {
     return false
   }
-  return namesLockedFile(command, await homeDir($)) && !(await isOpen($))
+  return namesLockedFile(command, await homeDir($), await lockRulesOf($)) && !(await isOpen($))
 }
 
 // Fail closed for tool.check: same rule as failClosed above.
@@ -171,14 +220,89 @@ async function startSession($: EngineInterface, cwd: string): Promise<void> {
   await $.state.set(GIT_ROOT, await findGitRoot($, cwd))
   await $.state.set(IS_WAITING, false)
   await $.state.set(IS_SKIPPED, false)
+  await $.state.set(IS_SOFT, false)
+  await $.state.set(IS_GATE_TOAST_SHOWN, false)
+  await $.state.set(LAST_PROBLEMS, '')
   const engine = await $.session.version()
-  const isTooOld = isOlderThan(engine.version, MIN_VERSION)
-  await $.state.set(IS_OFF, isTooOld)
-  if (isTooOld) {
+  const isOld = isOlderThan(engine.version, MIN_VERSION)
+  await $.state.set(IS_TOO_OLD, isOld)
+  await $.state.set(IS_OFF, isOld)
+  if (isOld) {
     $.ui.toast(`dry-run mod needs Claude Code ${MIN_VERSION} or newer. It is off for this session.`)
     return
   }
+  await loadRepoFile($)
   await registerCommands($)
+}
+
+// The text of the repo file, or null when the session has no git root or the
+// file is not there. Throws when the file cannot be read.
+async function readRepoFileText($: EngineInterface): Promise<string | null> {
+  const gitRoot = await gitRootOf($)
+  if (gitRoot === '' || gitRoot === UNKNOWN_ROOT) {
+    return null
+  }
+  const path = (gitRoot === '/' ? '' : gitRoot) + REPO_FILE_PATH
+  if (!(await $.fs.exists(path))) {
+    return null
+  }
+  const text = await $.fs.read(path)
+  if (typeof text !== 'string') {
+    throw new Error('repo file: not text')
+  }
+  return text
+}
+
+// Parses the repo file. A file that cannot be read is a bad file.
+async function parseRepoFileOf($: EngineInterface): Promise<ParseResult> {
+  try {
+    const text = await readRepoFileText($)
+    return text === null ? { file: emptyRepoFile(), problems: [] } : parseRepoFile(text)
+  } catch {
+    return { file: emptyRepoFile(), problems: ['Repo file ignored: it could not be read.'] }
+  }
+}
+
+// One toast per problem. The same set of problems is not shown twice in a row,
+// because a /clear raises two signals.
+async function showProblems($: EngineInterface, problems: string[]): Promise<void> {
+  const key = problems.join('\n')
+  const last = await $.state.get(LAST_PROBLEMS)
+  if (key === last.value) {
+    return
+  }
+  await $.state.set(LAST_PROBLEMS, key)
+  for (const problem of problems) {
+    $.ui.toast(problem)
+  }
+}
+
+// Once per session, when the repo file takes the gate down.
+async function showGateDown($: EngineInterface, file: RepoFile): Promise<void> {
+  const isDown = file.mode !== 'on' || file.unlock.length > 0
+  if (!isDown || (await isGateToastShown($)) || (await isSessionSet($))) {
+    return
+  }
+  await $.state.set(IS_GATE_TOAST_SHOWN, true)
+  $.ui.toast(`Repo sets dry-run mod: ${file.mode}. \`/dry-run on\` to lock.`)
+}
+
+// Reads the repo file at session start and after /clear. The repo sets the start
+// state. The person's /dry-run on or off wins, so it is never overwritten here.
+async function loadRepoFile($: EngineInterface): Promise<void> {
+  // An engine below the floor keeps the mod off, so the repo file means nothing.
+  if (await isTooOld($)) {
+    return
+  }
+  const result = await parseRepoFileOf($)
+  await $.state.set(REPO_FILE, JSON.stringify(result.file))
+  await $.state.set(PLATFORM, result.file.platform === null ? '' : JSON.stringify(result.file.platform))
+  await showProblems($, result.problems)
+  if (!(await isSessionSet($))) {
+    await $.state.set(IS_OFF, result.file.mode === 'off')
+    await $.state.set(IS_SOFT, result.file.mode === 'soft')
+  }
+  await showGateDown($, result.file)
 }
 
 // Register /go and /stop once. A second session.start must not register them again.
@@ -200,11 +324,19 @@ async function openGate($: EngineInterface, isSkipped: boolean): Promise<void> {
   await $.state.set(IS_SKIPPED, isSkipped)
 }
 
-// The text /dry-run shows: on or off, where that came from, and the gate.
+// The text /dry-run shows: the mode, where it came from, and the gate.
 async function statusText($: EngineInterface): Promise<string> {
-  const source = (await isSessionSet($)) ? 'session' : 'default'
+  let source = 'default'
+  if (await isSessionSet($)) {
+    source = 'session'
+  } else if ((await repoFileOf($)).hasMode) {
+    source = 'repo'
+  }
   if (await isOff($)) {
     return `dry-run mod: off (source: ${source}).`
+  }
+  if (await isSoft($)) {
+    return `dry-run mod: soft (source: ${source}). No gate.`
   }
   const gate = (await isOpen($)) ? 'open' : 'locked'
   return `dry-run mod: on (source: ${source}). Gate ${gate}.`
@@ -218,6 +350,7 @@ async function runDryRunCommand($: EngineInterface, args: string): Promise<{ tex
     await $.state.set(IS_SESSION_SET, true)
   } else if (word === 'on') {
     await $.state.set(IS_OFF, false)
+    await $.state.set(IS_SOFT, false)
     await $.state.set(IS_SESSION_SET, true)
     await lockGate($)
   } else if (word !== '') {
@@ -250,10 +383,12 @@ function isMainLoop(e: object): boolean {
   return (e as Record<string, unknown>).agentId === undefined
 }
 
-// Locks the gate when the event has `field` equal to `value`. Used for "clear".
+// Locks the gate when the event has `field` equal to `value`, and reads the repo
+// file again. Used for "clear".
 async function lockWhen($: EngineInterface, e: object, field: string, value: string): Promise<void> {
   if ((e as Record<string, unknown>)[field] === value) {
     await lockGate($)
+    await loadRepoFile($)
   }
 }
 

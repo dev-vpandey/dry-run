@@ -12,7 +12,7 @@ const SWITCH_NAME = 'dry-run.json'
 export const UNKNOWN_ROOT = '*'
 
 // True when the path starts at the root of a drive or of the disk.
-function isAbsolute(path: string): boolean {
+export function isAbsolute(path: string): boolean {
   const slashed = path.split('\\').join('/')
   const firstChar = slashed.charAt(0)
   const isLetter = firstChar.toLowerCase() !== firstChar.toUpperCase()

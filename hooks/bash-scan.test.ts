@@ -1,5 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 import { namesLockedFile, namesSwitchFile } from './bash-scan'
+import { lockRulesFor } from './repo-file'
 
 const HOME = '/Users/me'
 
@@ -105,4 +106,19 @@ test('gap: a symlink to the switch file is not caught', () => {
 
 test('gap: a glob that expands to the switch file is not caught', () => {
   expect(namesSwitchFile('echo {} > /repo/.claude/dry-*.json', isSwitchWord)).toBe(false)
+})
+
+const RULES = lockRulesFor(
+  { mode: 'on', hasMode: true, lock: ['.yaml'], unlock: ['generated/', '.sql'], platform: null },
+  '/repo',
+  '/repo',
+)
+
+test('repo rules: an extra locked ending is named, an unlocked one is not', () => {
+  expect(namesLockedFile('echo x > /repo/ci.yaml', HOME, RULES)).toBe(true)
+  expect(namesLockedFile('echo x > /repo/ci.yaml', HOME)).toBe(false)
+  expect(namesLockedFile('sed -i s/a/b/ /repo/db/q.sql', HOME, RULES)).toBe(false)
+  expect(namesLockedFile('sed -i s/a/b/ /repo/db/q.sql', HOME)).toBe(true)
+  expect(namesLockedFile('echo x > /repo/generated/a.py', HOME, RULES)).toBe(false)
+  expect(namesLockedFile('echo x > /repo/src/a.py', HOME, RULES)).toBe(true)
 })
