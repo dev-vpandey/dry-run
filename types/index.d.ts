@@ -18,6 +18,12 @@ declare module 'claude-code' {
       isGateToastShown: boolean
       // The problem toasts last shown, so a second /clear signal does not repeat them.
       lastProblems: string
+      // The index went into this thread.
+      isIndexSent: boolean
+      // The engine refused the rules tool, so the rule text rides on each prompt.
+      isToolBlocked: boolean
+      // The main thread posted a dry run this session or since the last clear.
+      isDryRunSeen: boolean
     }
   }
 }

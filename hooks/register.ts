@@ -1,4 +1,4 @@
-import type { Args, EngineInterface, Register } from 'claude-code'
+import type { Args, EngineInterface, PluginOptions, Register } from 'claude-code'
 import { namesLockedFile, namesSwitchFile } from './bash-scan'
 import { isDryRun } from './dry-run-check'
 import { isLocked } from './gate-path'
@@ -6,6 +6,19 @@ import type { LockRules } from './gate-path'
 import { emptyRepoFile, lockRulesFor, parseRepoFile, restoreRepoFile } from './repo-file'
 import type { ParseResult, RepoFile } from './repo-file'
 import { goWordKind } from './go-word'
+import {
+  bundledFiles,
+  indexText,
+  FORMAT_FILE,
+  GENERIC_PACK,
+  isRuleName,
+  joinRules,
+  overridePath,
+  RULE_NAMES,
+  statusLine,
+  withReaderLine,
+} from './rules'
+import type { RuleName, RulesState } from './rules'
 import { candidateRoots, isSwitchFile, UNKNOWN_ROOT } from './switch-file'
 import { isOlderThan } from './version'
 
@@ -40,6 +53,13 @@ const REPO_FILE = { plugin: 'dry-run', key: 'repoFile' } as const
 const PLATFORM = { plugin: 'dry-run', key: 'platform' } as const
 const IS_GATE_TOAST_SHOWN = { plugin: 'dry-run', key: 'isGateToastShown' } as const
 const LAST_PROBLEMS = { plugin: 'dry-run', key: 'lastProblems' } as const
+
+// The index went into this thread. It resets with a new session and a clear.
+const IS_INDEX_SENT = { plugin: 'dry-run', key: 'isIndexSent' } as const
+// The engine refused `$.tool.register`: the rule text rides on each prompt instead.
+const IS_TOOL_BLOCKED = { plugin: 'dry-run', key: 'isToolBlocked' } as const
+// The main thread posted a dry run since the session started or was cleared.
+const IS_DRY_RUN_SEEN = { plugin: 'dry-run', key: 'isDryRunSeen' } as const
 
 const REPO_FILE_PATH = '/.claude/dry-run.json'
 
@@ -78,6 +98,21 @@ async function isSoft($: EngineInterface): Promise<boolean> {
 
 async function isTooOld($: EngineInterface): Promise<boolean> {
   const read = await $.state.get(IS_TOO_OLD)
+  return read.value === true
+}
+
+async function isIndexSent($: EngineInterface): Promise<boolean> {
+  const read = await $.state.get(IS_INDEX_SENT)
+  return read.value === true
+}
+
+async function isToolBlocked($: EngineInterface): Promise<boolean> {
+  const read = await $.state.get(IS_TOOL_BLOCKED)
+  return read.value === true
+}
+
+async function isDryRunSeen($: EngineInterface): Promise<boolean> {
+  const read = await $.state.get(IS_DRY_RUN_SEEN)
   return read.value === true
 }
 
@@ -223,6 +258,8 @@ async function startSession($: EngineInterface, cwd: string): Promise<void> {
   await $.state.set(IS_SOFT, false)
   await $.state.set(IS_GATE_TOAST_SHOWN, false)
   await $.state.set(LAST_PROBLEMS, '')
+  await resetThread($)
+  await $.state.set(IS_TOOL_BLOCKED, false)
   const engine = await $.session.version()
   const isOld = isOlderThan(engine.version, MIN_VERSION)
   await $.state.set(IS_TOO_OLD, isOld)
@@ -233,6 +270,128 @@ async function startSession($: EngineInterface, cwd: string): Promise<void> {
   }
   await loadRepoFile($)
   await registerCommands($)
+  await registerRulesTool($)
+}
+
+// A new thread gets the index again, and the fallback text until a dry run is posted.
+async function resetThread($: EngineInterface): Promise<void> {
+  await $.state.set(IS_INDEX_SENT, false)
+  await $.state.set(IS_DRY_RUN_SEEN, false)
+}
+
+const RULES_TOOL_NAME = 'dry_run_rules'
+const RULES_TOOL = 'mcp__dry-run__dry_run_rules'
+const BLOCKED_TOAST = 'Rules tool blocked by your org. Using fallback text.'
+
+// The tool serves the rule text with no permission prompt. An org that sets
+// allowedMcpServers refuses the register: then the text rides on each prompt.
+async function registerRulesTool($: EngineInterface): Promise<void> {
+  try {
+    await $.tool.register({
+      name: RULES_TOOL_NAME,
+      description:
+        'Rule text for the dry-run mod. name: index (format and names), design, examples, dsa or platform. Call it before you post a dry run.',
+      inputSchema: {
+        type: 'object',
+        properties: { name: { type: 'string', enum: [...RULE_NAMES] } },
+        required: ['name'],
+      },
+      isDeferred: false,
+    })
+  } catch {
+    await $.state.set(IS_TOOL_BLOCKED, true)
+    $.ui.toast(BLOCKED_TOAST)
+  }
+}
+
+// The example pack the setting names, generic when it is missing or not text.
+function packOf(options: PluginOptions): string {
+  const value = options.examplePack
+  return typeof value === 'string' ? value : GENERIC_PACK
+}
+
+// The text of one file, or throws. The user's copy wins over the bundled one.
+async function readRuleFile($: EngineInterface, relative: string): Promise<string> {
+  const override = overridePath(await homeDir($), relative)
+  const path =
+    override !== null && (await $.fs.exists(override)) ? override : `${$.plugin.root}/templates/${relative}`
+  const text = await $.fs.read(path)
+  if (typeof text !== 'string') {
+    throw new Error(`rule file: not text: ${path}`)
+  }
+  return text
+}
+
+async function readRuleFiles($: EngineInterface, files: string[]): Promise<string[]> {
+  const texts: string[] = []
+  for (const file of files) {
+    texts.push(await readRuleFile($, file))
+  }
+  return texts
+}
+
+// The text one rule name returns, with the reader's-language line when set.
+async function ruleText($: EngineInterface, name: RuleName, options: PluginOptions): Promise<string> {
+  const pack = packOf(options)
+  const language = options.explainLanguage
+  if (name === 'index') {
+    return withReaderLine(indexText(await readRuleFiles($, bundledFiles('index', pack))), language)
+  }
+  return withReaderLine(joinRules(await readRuleFiles($, bundledFiles(name, pack))), language)
+}
+
+// Everything the model needs to write a dry run, for the fallback.
+async function fallbackRuleText($: EngineInterface, options: PluginOptions): Promise<string> {
+  const names: RuleName[] = ['design', 'examples', 'dsa']
+  const pack = packOf(options)
+  const files = [FORMAT_FILE]
+  for (const name of names) {
+    files.push(...bundledFiles(name, pack))
+  }
+  return withReaderLine(joinRules(await readRuleFiles($, files)), options.explainLanguage)
+}
+
+// The state the status line names. `off (repo)` is an off the repo file set and
+// the person did not change.
+async function rulesState($: EngineInterface): Promise<RulesState> {
+  if (await isOff($)) {
+    const isRepoOff = !(await isSessionSet($)) && (await repoFileOf($)).mode === 'off'
+    return isRepoOff ? 'off-repo' : 'off'
+  }
+  if (await isSoft($)) {
+    return 'soft'
+  }
+  return (await isOpen($)) ? 'open' : 'locked'
+}
+
+// What one prompt carries for the model: the rule text when it is due, then the
+// status line. A rule file that cannot be read costs the text, never the prompt.
+async function rulesContext($: EngineInterface, options: PluginOptions): Promise<string[]> {
+  const state = await rulesState($)
+  const isBlocked = await isToolBlocked($)
+  const status = statusLine(state, isBlocked)
+  if (state === 'off' || state === 'off-repo') {
+    return [status]
+  }
+  try {
+    if (isBlocked) {
+      const isFallbackDue = state !== 'open' && !(await isDryRunSeen($))
+      return isFallbackDue ? [await fallbackRuleText($, options), status] : [status]
+    }
+    if (await isIndexSent($)) {
+      return [status]
+    }
+    const index = await ruleText($, 'index', options)
+    await $.state.set(IS_INDEX_SENT, true)
+    return [index, status]
+  } catch {
+    return [status]
+  }
+}
+
+// The name the model passed to the rules tool. Anything may arrive.
+function ruleNameOf(input: object): unknown {
+  return 'name' in input ? input.name : undefined
 }
 
 // The text of the repo file, or null when the session has no git root or the
@@ -361,6 +520,7 @@ async function runDryRunCommand($: EngineInterface, args: string): Promise<{ tex
 
 // A new dry run locks the gate and waits for the next go.
 async function waitForGo($: EngineInterface): Promise<void> {
+  await $.state.set(IS_DRY_RUN_SEEN, true)
   await $.state.set(IS_OPEN, false)
   await $.state.set(IS_WAITING, true)
   await $.state.set(IS_SKIPPED, false)
@@ -383,8 +543,29 @@ function isMainLoop(e: object): boolean {
   return !('agentId' in e) || e.agentId === undefined
 }
 
+// A go word opens the gate. Returns why the prompt is dropped, or null to let it pass.
+async function applyGoWord($: EngineInterface, e: Args<'prompt.submit'>): Promise<string | null> {
+  const kind = goWordKind(e.text)
+  if ((await isOff($)) || kind === 'none') {
+    return null
+  }
+  if (await isWaiting($)) {
+    await openGate($, false)
+    return null
+  }
+  if (kind === 'just-do-it') {
+    // Gate already open: nothing to unlock, and the open dry run stays as it is.
+    if (!(await isOpen($))) {
+      await openGate($, true)
+    }
+    return null
+  }
+  return 'no dry run to approve'
+}
+
 // A clear: lock the gate and read the repo file again.
 async function lockOnClear($: EngineInterface): Promise<void> {
+  await resetThread($)
   await lockGate($)
   await loadRepoFile($)
 }
@@ -396,7 +577,7 @@ async function lockGate($: EngineInterface) {
   return { text: '⊘ Gate locked. Edits to code files are blocked.' }
 }
 
-export const register: Register = on => {
+export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     await startSession($, e.cwd)
     return next(e)
@@ -444,27 +625,31 @@ export const register: Register = on => {
     return next(e)
   })
 
-  // A go word, sent as the whole message, opens the gate.
+  // A go word, sent as the whole message, opens the gate. Then the rules go in: the
+  // status line of the prompt that opens the gate already says open. One hook, because
+  // the engine takes only one prompt.submit hook without a matcher.
   on('prompt.submit', async ($, e, next) => {
-    if (!isFromPerson(e) || (await isOff($))) {
+    if (!isFromPerson(e)) {
       return next(e)
     }
-    const kind = goWordKind(e.text)
-    if (kind === 'none') {
-      return next(e)
+    const dropReason = await applyGoWord($, e)
+    if (dropReason !== null) {
+      return { drop: dropReason }
     }
-    if (await isWaiting($)) {
-      await openGate($, false)
-      return next(e)
+    return next({ ...e, context: [...(e.context ?? []), ...(await rulesContext($, options))] })
+  })
+
+  // Served at tool.call and not at tool.run, so no permission prompt appears.
+  on('tool.call', { tool: RULES_TOOL }, async ($, e) => {
+    const name = ruleNameOf(e)
+    if (!isRuleName(name)) {
+      return { deny: `dry_run_rules: name must be one of ${RULE_NAMES.join(' | ')}` }
     }
-    if (kind === 'just-do-it') {
-      // Gate already open: nothing to unlock, and the open dry run stays as it is.
-      if (!(await isOpen($))) {
-        await openGate($, true)
-      }
-      return next(e)
+    try {
+      return { result: await ruleText($, name, options) }
+    } catch {
+      return { deny: `dry_run_rules: could not read the ${name} rules.` }
     }
-    return { drop: 'no dry run to approve' }
   })
 
   on('command.run', { command: GO_NAME }, async $ => {

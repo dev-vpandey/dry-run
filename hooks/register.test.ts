@@ -32,6 +32,31 @@ type Stubs = {
   readThrows?: boolean
   // The tool.call stub beneath the mod throws.
   toolCallThrows?: boolean
+  // Rule files of the plugin, by path under `templates/`.
+  bundled?: Record<string, string>
+  // The user's copies, by path under `~/.claude/dry-run/templates/`.
+  overrides?: Record<string, string>
+  // The engine refuses `$.tool.register`, as an org with allowedMcpServers does.
+  refuseTool?: boolean
+  // The variable that holds the home folder. HOME when left out.
+  homeVar?: 'HOME' | 'USERPROFILE'
+}
+
+const OVERRIDE_DIR = '/Users/me/.claude/dry-run/templates/'
+
+// The text of a rule file the stubs hold, or undefined when none is there.
+function ruleFileText(stubs: Stubs, path: string): string | undefined {
+  for (const [relative, text] of Object.entries(stubs.overrides ?? {})) {
+    if (path === OVERRIDE_DIR + relative) {
+      return text
+    }
+  }
+  for (const [relative, text] of Object.entries(stubs.bundled ?? {})) {
+    if (path.endsWith('/templates/' + relative) && !path.startsWith(OVERRIDE_DIR)) {
+      return text
+    }
+  }
+  return undefined
 }
 
 // Each hook here stands for the engine, beneath the mod.
@@ -40,6 +65,8 @@ function stubEngine(on: On, stubs: Stubs = {}) {
   const toasts: string[] = []
   const registered: string[] = []
   const reads: string[] = []
+  const contexts: (readonly string[] | undefined)[] = []
+  const tools: string[] = []
   let isStateBroken = false
   on('session.start', (_: unknown, e: { cwd: string }) => ({ cwd: e.cwd }))
   on('session.version', () => ({ value: { version: stubs.version ?? '2.1.326' } }))
@@ -54,7 +81,7 @@ function stubEngine(on: On, stubs: Stubs = {}) {
     toasts.push(e.text)
     return { value: undefined }
   })
-  on('env.get', (_: unknown, e: { name: string }) => ({ value: e.name === 'HOME' ? (stubs.home ?? '/Users/me') : undefined }))
+  on('env.get', (_: unknown, e: { name: string }) => ({ value: e.name === (stubs.homeVar ?? 'HOME') ? (stubs.home ?? '/Users/me') : undefined }))
   on('session.end', () => ({ sessionId: 's1' }))
   on('classic.SessionStart', () => ({}))
   on('session.compact', (_: unknown, e: Args<'session.compact'>) => ({ messages: e.messages }))
@@ -65,12 +92,20 @@ function stubEngine(on: On, stubs: Stubs = {}) {
     }
     const isGit = stubs.gitRoot !== undefined && e.path === stubs.gitRoot + '/.git'
     const isRepoFile = stubs.repoFile !== undefined && e.path === stubs.gitRoot + '/.claude/dry-run.json'
-    return { value: isGit || isRepoFile }
+    return { value: isGit || isRepoFile || ruleFileText(stubs, e.path) !== undefined }
   })
   on('fs.read', (_: unknown, e: { path: string }) => {
     reads.push(e.path)
     if (stubs.readThrows) {
       return { deny: 'disk error' }
+    }
+    const rule = ruleFileText(stubs, e.path)
+    if (rule !== undefined) {
+      return { value: rule }
+    }
+    // A rule file that is not there fails the read, as on disk.
+    if (e.path.includes('/templates/')) {
+      return { deny: 'no such file' }
     }
     return { value: stubs.repoFile ?? '' }
   })
@@ -83,9 +118,19 @@ function stubEngine(on: On, stubs: Stubs = {}) {
     return { result: {} }
   })
   on('tool.check', () => ({ decision: 'allow', reason: 'stub' }))
-  on('prompt.submit', (_: unknown, e: { text: string }) => ({ text: e.text }))
+  on('tool.register', (_: unknown, e: { name: string }) => {
+    if (stubs.refuseTool) {
+      return { deny: 'allowedMcpServers is set' }
+    }
+    tools.push(e.name)
+    return { value: { tool: 'mcp__dry-run__' + e.name } }
+  })
+  on('prompt.submit', (_: unknown, e: { text: string; context?: readonly string[] }) => {
+    contexts.push(e.context)
+    return { text: e.text }
+  })
   on('turn.complete', (_: unknown, e: { answer: string }) => ({ text: e.answer }))
-  return { toasts, registered, reads, breakState: () => { isStateBroken = true } }
+  return { toasts, registered, reads, contexts, tools, breakState: () => { isStateBroken = true } }
 }
 
 async function start($: Engine, cwd: string = '/') {
@@ -865,4 +910,283 @@ test('an engine below the floor: /clear reads no repo file and shows no repo toa
   expect(reads).toEqual([])
   expect(toasts.length).toBe(1)
   expect(toasts[0]).toContain('needs Claude Code')
+})
+
+// ---- Rules delivery (ticket 26) ----
+
+const RULES_TOOL = 'mcp__dry-run__dry_run_rules'
+const BLOCKED_TOAST = 'Rules tool blocked by your org. Using fallback text.'
+const BUNDLED = {
+  'dry-run-format.md': 'FORMAT TEXT',
+  'dry-run-names.md': 'NAMES TEXT',
+  'dry-run-design.md': 'DESIGN TEXT',
+  'dry-run-dsa.md': 'DSA TEXT',
+  'examples/generic.md': 'GENERIC EXAMPLES',
+  'examples/data-pipeline.md': 'PIPELINE EXAMPLES',
+}
+const LOCKED_LINE = 'dry-run mod: locked; call dry_run_rules'
+
+function rules($: Engine, name: string) {
+  return $.tool.call({ tool: RULES_TOOL, name })
+}
+
+// The context the last prompt reached the bottom with.
+function lastContext(contexts: (readonly string[] | undefined)[]): readonly string[] {
+  return contexts[contexts.length - 1] ?? []
+}
+
+test('rules: the tool is registered at session start', async ($, on) => {
+  const { tools } = stubEngine(on, { bundled: BUNDLED })
+  await start($)
+
+  expect(tools).toEqual(['dry_run_rules'])
+})
+
+test('rules: the index goes in once per thread, the status line every turn', async ($, on) => {
+  const { contexts } = stubEngine(on, { bundled: BUNDLED })
+  await start($)
+
+  await submit($, 'first')
+  const first = lastContext(contexts)
+  expect(first.length).toBe(2)
+  expect(first[0]).toContain('FORMAT TEXT')
+  expect(first[0]).toContain('NAMES TEXT')
+  expect(first[0]).toContain('dry_run_rules("dsa")')
+  expect(first[0]).not.toContain('DSA TEXT')
+  expect(first[0]).not.toContain('DESIGN TEXT')
+  expect(first[1]).toBe(LOCKED_LINE)
+
+  await submit($, 'second')
+  expect(lastContext(contexts)).toEqual([LOCKED_LINE])
+})
+
+test('rules: a new session and a clear send the index again', async ($, on) => {
+  const { contexts } = stubEngine(on, { bundled: BUNDLED })
+  await start($)
+  await submit($, 'first')
+
+  await $.session.end(sessionEnd('clear'))
+  await submit($, 'after clear')
+  expect(lastContext(contexts).length).toBe(2)
+
+  await start($)
+  await submit($, 'after restart')
+  expect(lastContext(contexts).length).toBe(2)
+})
+
+test('rules: the status line names each state', async ($, on) => {
+  const { contexts } = stubEngine(on, { bundled: BUNDLED })
+  await start($)
+  await submit($, 'one')
+
+  await run($, 'go')
+  await submit($, 'two')
+  expect(lastContext(contexts)).toEqual(['dry-run mod: open'])
+
+  await dryRun($, 'off')
+  await submit($, 'three')
+  expect(lastContext(contexts)).toEqual(['dry-run mod: off'])
+})
+
+test('rules: repo off shows off (repo), no index', async ($, on) => {
+  const { contexts } = await startWithRepoFile('{ "mode": "off" }', { bundled: BUNDLED })($, on)
+
+  await submit($, 'one')
+
+  expect(lastContext(contexts)).toEqual(['dry-run mod: off (repo)'])
+})
+
+test('rules: repo soft shows soft and still sends the index', async ($, on) => {
+  const { contexts } = await startWithRepoFile('{ "mode": "soft" }', { bundled: BUNDLED })($, on)
+
+  await submit($, 'one')
+
+  expect(lastContext(contexts).length).toBe(2)
+  expect(lastContext(contexts)[1]).toBe('dry-run mod: soft; call dry_run_rules')
+})
+
+test('rules: /dry-run off before the first prompt sends the status line only', async ($, on) => {
+  const { contexts } = stubEngine(on, { bundled: BUNDLED })
+  await start($)
+  await dryRun($, 'off')
+
+  await submit($, 'one')
+
+  expect(lastContext(contexts)).toEqual(['dry-run mod: off'])
+})
+
+test('rules: a prompt that is not the person\'s own gets no rule text', async ($, on) => {
+  const { contexts } = stubEngine(on, { bundled: BUNDLED })
+  await start($)
+
+  await submit($, 'task note', { origin: { kind: 'notification' } })
+
+  expect(lastContext(contexts)).toEqual([])
+})
+
+test('rules: the tool returns the bundled file for each name', async ($, on) => {
+  stubEngine(on, { bundled: BUNDLED })
+  await start($)
+
+  expect(await rules($, 'design')).toEqual({ result: 'DESIGN TEXT' })
+  expect(await rules($, 'dsa')).toEqual({ result: 'DSA TEXT' })
+  expect(await rules($, 'examples')).toEqual({ result: 'GENERIC EXAMPLES' })
+  const index = await rules($, 'index')
+  expect(String(index.result)).toContain('FORMAT TEXT')
+})
+
+test('rules: an override of the user wins per file', async ($, on) => {
+  stubEngine(on, { bundled: BUNDLED, overrides: { 'dry-run-dsa.md': 'MY DSA' } })
+  await start($)
+
+  expect(await rules($, 'dsa')).toEqual({ result: 'MY DSA' })
+  expect(await rules($, 'design')).toEqual({ result: 'DESIGN TEXT' })
+})
+
+test('rules: an override is found under USERPROFILE when HOME is not set', async ($, on) => {
+  stubEngine(on, { bundled: BUNDLED, overrides: { 'dry-run-dsa.md': 'MY DSA' }, homeVar: 'USERPROFILE' })
+  await start($)
+
+  expect(await rules($, 'dsa')).toEqual({ result: 'MY DSA' })
+})
+
+test('rules: examples returns the pack, then generic', async ($, on) => {
+  stubEngine(on, { bundled: BUNDLED })
+  await start($)
+
+  expect(await rules($, 'examples')).toEqual({ result: 'GENERIC EXAMPLES' })
+})
+
+test('rules: the pack option picks the examples file', { options: { examplePack: 'data-pipeline' } }, async ($, on) => {
+  stubEngine(on, { bundled: BUNDLED })
+  await start($)
+
+  expect(await rules($, 'examples')).toEqual({ result: 'PIPELINE EXAMPLES\n\nGENERIC EXAMPLES' })
+})
+
+test('rules: a name outside the list is refused', async ($, on) => {
+  stubEngine(on, { bundled: BUNDLED })
+  await start($)
+
+  const answer = await rules($, 'coach')
+
+  expect(answer.deny).toContain('index | design | examples | dsa | platform')
+})
+
+test('rules: a file that cannot be read is refused with the name', async ($, on) => {
+  stubEngine(on, { bundled: BUNDLED })
+  await start($)
+
+  // dry-run-platform.md is not in the stub, so the read fails.
+  const answer = await rules($, 'platform')
+
+  expect(answer.deny).toContain('platform')
+})
+
+test('rules: explainLanguage adds the reader line to rule text', { options: { explainLanguage: 'java' } }, async ($, on) => {
+  const { contexts } = stubEngine(on, { bundled: BUNDLED })
+  await start($)
+
+  await submit($, 'one')
+  expect(lastContext(contexts)[0]).toContain("Reader's language: java")
+  expect(String((await rules($, 'dsa')).result)).toContain("Reader's language: java")
+})
+
+test('rules: explainLanguage off adds no reader line', { options: { explainLanguage: 'off' } }, async ($, on) => {
+  const { contexts } = stubEngine(on, { bundled: BUNDLED })
+  await start($)
+
+  await submit($, 'one')
+
+  expect(lastContext(contexts)[0]).not.toContain("Reader's language")
+})
+
+test('rules: a refused tool shows one toast and the full text rides each prompt', async ($, on) => {
+  const { toasts, contexts } = stubEngine(on, { bundled: BUNDLED, refuseTool: true })
+  await start($)
+
+  expect(toasts).toEqual([BLOCKED_TOAST])
+  await submit($, 'one')
+  await submit($, 'two')
+
+  const full = 'FORMAT TEXT\n\nDESIGN TEXT\n\nGENERIC EXAMPLES\n\nDSA TEXT'
+  expect(lastContext(contexts)).toEqual([full, 'dry-run mod: locked'])
+  expect(contexts.length).toBe(2)
+  expect(contexts[0]).toEqual([full, 'dry-run mod: locked'])
+})
+
+test('rules: the fallback text stops after a dry run, when the gate is open, and when off', async ($, on) => {
+  const { contexts } = stubEngine(on, { bundled: BUNDLED, refuseTool: true })
+  await start($)
+
+  await complete($, DRY_RUN)
+  await submit($, 'after dry run')
+  expect(lastContext(contexts)).toEqual(['dry-run mod: locked'])
+
+  await start($)
+  await run($, 'go')
+  await submit($, 'open')
+  expect(lastContext(contexts)).toEqual(['dry-run mod: open'])
+
+  await start($)
+  await dryRun($, 'off')
+  await submit($, 'off')
+  expect(lastContext(contexts)).toEqual(['dry-run mod: off'])
+})
+
+test('rules: a dry run from a subagent does not stop the fallback text', async ($, on) => {
+  const { contexts } = stubEngine(on, { bundled: BUNDLED, refuseTool: true })
+  await start($)
+
+  await complete($, DRY_RUN, { agentId: 'agent-1' })
+  await submit($, 'next')
+
+  expect(lastContext(contexts).length).toBe(2)
+})
+
+test('rules: the fallback carries the reader line when set', { options: { explainLanguage: 'java' } }, async ($, on) => {
+  const { contexts } = stubEngine(on, { bundled: BUNDLED, refuseTool: true })
+  await start($)
+
+  await submit($, 'one')
+
+  expect(lastContext(contexts)[0]).toContain("Reader's language: java")
+})
+
+test('rules: the go word opens the gate and its own status line already says open', async ($, on) => {
+  const { contexts } = stubEngine(on, { bundled: BUNDLED })
+  await start($)
+  await complete($, DRY_RUN)
+
+  await submit($, 'go ahead')
+
+  expect(await $.tool.call(EDIT_LOCKED)).toEqual({ result: {} })
+  expect(lastContext(contexts)[1]).toBe('dry-run mod: open')
+})
+
+test('rules: a missing rule file does not stop the prompt, the status line still goes in', async ($, on) => {
+  const { contexts } = stubEngine(on, { bundled: {} })
+  await start($)
+
+  await submit($, 'one')
+
+  expect(lastContext(contexts)).toEqual([LOCKED_LINE])
+})
+
+test('rules: a session /dry-run off over a repo off shows off, not off (repo)', async ($, on) => {
+  const { contexts } = await startWithRepoFile('{ "mode": "off" }', { bundled: BUNDLED })($, on)
+  await dryRun($, 'off')
+
+  await submit($, 'one')
+
+  expect(lastContext(contexts)).toEqual(['dry-run mod: off'])
+})
+
+test('rules: a missing rule file does not stop the prompt when the tool is blocked', async ($, on) => {
+  const { contexts } = stubEngine(on, { bundled: {}, refuseTool: true })
+  await start($)
+
+  await submit($, 'one')
+
+  expect(lastContext(contexts)).toEqual(['dry-run mod: locked'])
 })
