@@ -79,6 +79,16 @@ test('lock: an item with .. is not special, only unlock has limits', () => {
   expect(result.problems).toEqual([])
 })
 
+test('lock: a folder item is ignored and named, endings stay', () => {
+  for (const item of ['generated/', 'src/gen/', './x/']) {
+    const result = parseRepoFile(JSON.stringify({ lock: [item, '.yaml'] }))
+    expect(result.file.lock, item).toEqual(['.yaml'])
+    expect(result.problems.length, item).toBe(1)
+    expect(result.problems[0], item).toContain(item)
+    expect(result.problems[0], item).toContain('lock')
+  }
+})
+
 test('platform: a good block is read', () => {
   const text = '{ "platform": { "agent": "research", "paths": ["src/**", "infra/*.tf"] } }'
   const result = parseRepoFile(text)

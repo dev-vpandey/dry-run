@@ -76,12 +76,17 @@ function unlockProblem(item: string): string {
   return ''
 }
 
+// Why a lock item is refused, or '' when it is fine. Lock takes endings only.
+function lockProblem(item: string): string {
+  return item.trim().endsWith('/') ? 'lock takes endings, not folders' : ''
+}
+
 // Keeps the items that are an ending or a folder. Each item left out adds a
 // problem that names it. `key` is "lock" or "unlock".
 function cleanItems(key: string, items: string[], problems: string[]): string[] {
   const kept: string[] = []
   for (const item of items) {
-    const refusal = key === 'unlock' ? unlockProblem(item) : ''
+    const refusal = key === 'unlock' ? unlockProblem(item) : lockProblem(item)
     const clean = cleanItem(item)
     if (refusal !== '') {
       problems.push(`Repo file: "${key}" item ignored: ${item} (${refusal}).`)
