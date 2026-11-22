@@ -149,8 +149,8 @@ export function parseRepoFile(text: string): ParseResult {
   if (typeof data !== 'object' || data === null || Array.isArray(data)) {
     return ignored('it is not a JSON object.')
   }
-  const map = data as Record<string, unknown>
-  for (const key of Object.keys(map)) {
+  const map = new Map<string, unknown>(Object.entries(data))
+  for (const key of map.keys()) {
     if (!KNOWN_KEYS.includes(key)) {
       return ignored(`unknown key "${key}".`)
     }
@@ -158,8 +158,8 @@ export function parseRepoFile(text: string): ParseResult {
 
   const file = emptyRepoFile()
   const problems: string[] = []
-  if (map.mode !== undefined) {
-    const mode = modeOf(map.mode)
+  if (map.has('mode')) {
+    const mode = modeOf(map.get('mode'))
     if (mode === null) {
       return ignored('"mode" must be on, soft or off.')
     }
@@ -167,17 +167,17 @@ export function parseRepoFile(text: string): ParseResult {
     file.hasMode = true
   }
   for (const key of ['lock', 'unlock'] as const) {
-    if (map[key] === undefined) {
+    if (!map.has(key)) {
       continue
     }
-    const items = textList(map[key])
+    const items = textList(map.get(key))
     if (items === null) {
       return ignored(`"${key}" must be a list of text.`)
     }
     file[key] = cleanItems(key, items, problems)
   }
-  if (map.platform !== undefined) {
-    file.platform = readPlatform(map.platform, problems)
+  if (map.has('platform')) {
+    file.platform = readPlatform(map.get('platform'), problems)
   }
   return { file, problems }
 }
