@@ -3,7 +3,7 @@
 // Rules: SPEC section 6.
 
 import { atom, read } from 'claude-code'
-import type { EngineInterface, Register } from 'claude-code'
+import type { EngineInterface, Register, RenderChildren } from 'claude-code'
 import { tokensFor } from './design-card-colors'
 import type { Tokens } from './design-card-colors'
 import { namesOf, PANE_ID, parseCard, repoUnlockLine, sectionPills } from './design-card'
@@ -34,15 +34,15 @@ type View = {
 // This build gives a mod no signal for the person's color mode. Dark until it does.
 const TOKENS = tokensFor(false)
 
-// A part of the gate pill: its words and colors.
+// A part of the gate pill: its words and colors. The words are the prototype's.
 function gateOf(view: View, t: Tokens): { label: string; color: string; bg: string } {
   if (view.gate === 'open') {
-    return { label: '✓ open', color: t.green, bg: t.greenBg }
+    return { label: '✓ GATE OPEN', color: t.green, bg: t.greenBg }
   }
   if (view.gate === 'soft') {
-    return { label: '◇ soft', color: t.amber, bg: t.amberBg }
+    return { label: '◇ GATE SOFT', color: t.amber, bg: t.amberBg }
   }
-  return { label: '⊘ locked', color: t.red, bg: t.redBg }
+  return { label: '⊘ GATE LOCKED', color: t.red, bg: t.redBg }
 }
 
 // Four rows of Clawd: prop, eyes, body, legs. Asleep by a red ⊘ when locked.
@@ -88,6 +88,13 @@ async function namesFrom($: EngineInterface): Promise<Names | null> {
   }
 }
 
+// A word on a colored background. A terminal paints a solid color, so the prototype's
+// soft tint is a blended solid (design-card-colors.ts), and its dashed border is not drawn.
+function pillOf(els: Els, label: string, color: string, bg: string) {
+  const { Text } = els
+  return <Text color={color} backgroundColor={bg}>{` ${label} `}</Text>
+}
+
 function bandTree(els: Els, view: View): ReturnType<Els['Box']> {
   const { Box, Text } = els
   const t = TOKENS
@@ -95,31 +102,42 @@ function bandTree(els: Els, view: View): ReturnType<Els['Box']> {
   const card = parseCard(view.text, null)
   return (
     <Box>
-      <Text color={t.claude}>✻ dry-run </Text>
-      <Text color={gate.color} backgroundColor={gate.bg}>{` ${gate.label} `}</Text>
-      {sectionPills(card.done).map(pill => (
-        <Text color={pill.isDone ? t.green : t.dim}>{` ${pill.isDone ? '◆' : '◇'} ${pill.name}`}</Text>
-      ))}
+      <Text color={t.claude}>✻ </Text>
+      <Text bold>dry-run </Text>
+      {pillOf(els, gate.label, gate.color, gate.bg)}
+      {sectionPills(card.done).map(pill =>
+        pill.isDone ? pillOf(els, `◆ ${pill.name}`, t.claude, t.claudeBg) : <Text color={t.dim}>{` ◇ ${pill.name} `}</Text>
+      )}
     </Box>
   )
+}
+
+function levelColor(level: 'E' | 'M' | 'H', t: Tokens): string {
+  if (level === 'E') {
+    return t.green
+  }
+  return level === 'M' ? t.amber : t.red
 }
 
 function paneTree($: EngineInterface, els: Els, view: View, card: Card): ReturnType<Els['Box']> {
   const { Box, Text, Button, Link } = els
   const t = TOKENS
   const gate = gateOf(view, t)
-  const pill = (label: string, color: string, bg: string) => (
-    <Text color={color} backgroundColor={bg}>{` ${label} `}</Text>
-  )
-  // One box: a pill, then lines of text. A line of '' is skipped.
-  const box = (label: string, color: string, bg: string, lines: string[], dim: string[] = []) => (
+  const pill = (label: string, color: string, bg: string) => pillOf(els, label, color, bg)
+  const outline = (color: string, children: RenderChildren) => (
     <Box flexDirection="column" borderStyle="round" borderColor={color} paddingX={1}>
-      {pill(label, color, bg)}
-      {lines.filter(line => line !== '').map(line => <Text>{line}</Text>)}
-      {dim.filter(line => line !== '').map(line => <Text dimColor>{line}</Text>)}
+      {children}
     </Box>
   )
-  const choiceLine = (choice: Card['pattern']) => (choice.name === '' ? '—' : choice.name)
+  const nameLine = (name: string, color: string, bg: string) => (name === '' ? <Text>—</Text> : pill(name, color, bg))
+  const solid = card.solid.rows.length === 0
+    ? [<Text>{card.solid.note === '' ? '—' : card.solid.note}</Text>]
+    : card.solid.rows.map(row => (
+        <Box>
+          {pill(row.name, t.term, t.claude)}
+          <Text dimColor>{` ${row.why}`}</Text>
+        </Box>
+      ))
   return (
     <Box flexDirection="column">
       <Box flexDirection="column">
@@ -127,32 +145,39 @@ function paneTree($: EngineInterface, els: Els, view: View, card: Card): ReturnT
         <Text dimColor>{CAPTIONS.get(view.gate) ?? ''}</Text>
       </Box>
       <Box>
-        <Text bold>{'dry-run · Design Card '}</Text>
-        {pill(gate.label, gate.color, gate.bg)}
+        <Text bold>dry-run</Text>
+        <Text dimColor>{' · Design Card'}</Text>
       </Box>
-      {box('Goal', t.claude, t.claudeBg, [card.goal === '' ? '—' : card.goal])}
-      {box('SOLID', t.claude, t.claudeBg, [card.solid === '' ? '—' : card.solid])}
-      {box('Pattern', t.violet, t.violetBg, [choiceLine(card.pattern)], [card.pattern.note, card.pattern.why])}
-      <Box flexDirection="column" borderStyle="round" borderColor={t.blue} paddingX={1}>
-        {pill('DSA', t.blue, t.blueBg)}
-        <Text>{choiceLine(card.dsa)}</Text>
-        {card.dsa.note !== '' && <Text dimColor>{card.dsa.note}</Text>}
-        {card.dsa.why !== '' && <Text dimColor>{card.dsa.why}</Text>}
-        {card.dsa.bigO !== '' && <Text>{`Big-O: ${card.dsa.bigO}`}</Text>}
-        {card.dsa.rows.map(row => (
+      {pill(gate.label, gate.color, gate.bg)}
+      {outline(t.fg, [pill('Goal', t.fg, t.claudeBg), <Text>{card.goal === '' ? '—' : card.goal}</Text>])}
+      {outline(t.claude, [pill('SOLID', t.claude, t.claudeBg), ...solid])}
+      {outline(t.violet, [
+        pill('Pattern', t.violet, t.violetBg),
+        nameLine(card.pattern.name, t.violet, t.violetBg),
+        ...[card.pattern.note, card.pattern.why].filter(line => line !== '').map(line => <Text dimColor>{line}</Text>),
+      ])}
+      {outline(t.blue, [
+        pill('DSA', t.blue, t.blueBg),
+        nameLine(card.dsa.name, t.blue, t.blueBg),
+        ...[card.dsa.note, card.dsa.why, card.dsa.bigO].filter(line => line !== '').map(line => <Text dimColor>{line}</Text>),
+        ...card.dsa.rows.map(row => (
           <Box>
-            <Text color={row.difficulty === 'E' ? t.green : row.difficulty === 'M' ? t.amber : t.red}>{`○ ${row.difficulty} `}</Text>
+            <Text color={t.blue}>○ </Text>
+            <Text color={levelColor(row.difficulty, t)}>{`${row.difficulty} `}</Text>
             <Link href={row.url} label={row.title} />
           </Box>
-        ))}
-      </Box>
+        )),
+      ])}
       {view.gate === 'open' ? (
         <Box>
-          <Text color={t.green}>{view.isSkipped ? '✓ Gate open · dry run skipped ' : '✓ Approved for this dry run '}</Text>
+          {pill(view.isSkipped ? '✓ Gate open · dry run skipped' : '✓ Approved for this dry run', t.green, t.greenBg)}
           <Button key="stop" label="/stop" onPress={async () => { await lockGate($) }} />
         </Box>
       ) : view.isWaiting ? (
-        <Button key="go" label="▶ Go [g]" hotkey="g" variant="primary" onPress={() => openGate($, false)} />
+        <Box>
+          <Button key="go" label="▶ Go [g]" hotkey="g" variant="primary" onPress={() => openGate($, false)} />
+          <Text dimColor>{' or type /go · "go ahead"'}</Text>
+        </Box>
       ) : (
         <Text dimColor>▶ Go [g] needs a dry run</Text>
       )}

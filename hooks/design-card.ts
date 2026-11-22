@@ -31,9 +31,12 @@ const NO_LINK = 'no verified link'
 export type Names = { patterns: string[]; dsa: string[] }
 export type Choice = { name: string; why: string; note: string }
 export type LeetRow = { title: string; difficulty: 'E' | 'M' | 'H'; url: string }
+// One row of the SOLID table: the principle and why it is in play.
+export type Principle = { name: string; why: string }
 export type Card = {
   goal: string
-  solid: string
+  // The table rows, or the words of a section that has no table ("None at stake: ...").
+  solid: { rows: Principle[]; note: string }
   pattern: Choice
   dsa: Choice & { bigO: string; rows: LeetRow[] }
   // The boxes that have text, in box order.
@@ -98,17 +101,20 @@ function cellsOf(row: string): string[] {
     .filter(cell => cell !== '')
 }
 
-// The SOLID box: the principle names of the table (first column, header row skipped),
-// or the plain text when the section is not a table ("None at stake: ...").
-function solidText(body: string[]): string {
+// The SOLID box: one row per principle of the table (header row skipped; columns are
+// principle, where, why), or the plain text when the section is not a table.
+function solidOf(body: string[]): Card['solid'] {
   const rows = body.filter(line => isTableLine(line) && !isBorder(line))
   if (rows.length === 0) {
-    return body.join(' ')
+    return { rows: [], note: body.join(' ') }
   }
-  return rows
-    .slice(1)
-    .map(row => cellsOf(row)[0] ?? '')
-    .join(', ')
+  return {
+    rows: rows.slice(1).map(row => {
+      const cells = cellsOf(row)
+      return { name: cells[0] ?? '', why: cells[2] ?? '' }
+    }),
+    note: '',
+  }
 }
 
 // The first line after the "**Chosen:**" line that is not a Big-O or link line.
@@ -181,7 +187,7 @@ export function parseCard(text: string, names: Names | null): Card {
   const dsaName = valueAfter(dsaBody, CHOSEN)
   return {
     goal: valueAfter(body.get('Goal') ?? [], GOAL),
-    solid: solidText(body.get('SOLID') ?? []),
+    solid: solidOf(body.get('SOLID') ?? []),
     pattern: { name: patternName, why: whyOf(patternBody), note: noteOf(patternName, names?.patterns, false) },
     dsa: {
       name: dsaName,

@@ -16,6 +16,11 @@ export type Tokens = {
   violet: string
   violetBg: string
   dim: string
+  faint: string
+  fg: string
+  claudeHi: string
+  // The terminal's own color, for text on a solid pill.
+  term: string
 }
 
 export const DARK: Tokens = {
@@ -32,6 +37,10 @@ export const DARK: Tokens = {
   violet: '#b9a6ff',
   violetBg: '#2a2835',
   dim: '#8a877f',
+  faint: '#4a4844',
+  fg: '#e6e3dc',
+  claudeHi: '#ffcfb8',
+  term: '#151517',
 }
 
 export const LIGHT: Tokens = {
@@ -48,6 +57,10 @@ export const LIGHT: Tokens = {
   violet: '#6a4fd1',
   violetBg: '#edeaf3',
   dim: '#6f6c66',
+  faint: '#b9b5ac',
+  fg: '#1d1c1a',
+  claudeHi: '#f6a07f',
+  term: '#faf9f6',
 }
 
 export function tokensFor(isLight: boolean): Tokens {

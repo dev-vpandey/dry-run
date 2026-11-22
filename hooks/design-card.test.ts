@@ -36,7 +36,7 @@ const DRY_RUN = [
 test('a dry run fills the four boxes', async () => {
   const card = parseCard(DRY_RUN, NAMES)
   expect(card.goal).toBe('show the gate at a glance')
-  expect(card.solid).toBe('Single Responsibility')
+  expect(card.solid).toEqual({ rows: [{ name: 'Single Responsibility', why: 'one job' }], note: '' })
   expect(card.pattern).toEqual({
     name: 'Strategy',
     why: 'Strategy wins because two variants exist today.',
@@ -46,6 +46,11 @@ test('a dry run fills the four boxes', async () => {
   expect(card.dsa.why).toBe('Cheap membership test.')
   expect(card.dsa.bigO).toBe('O(1) per lookup.')
   expect(card.done).toEqual(['Goal', 'SOLID', 'Pattern', 'DSA'])
+})
+
+test('a SOLID section with no table keeps its words as a note', async () => {
+  const text = ['### 3. SOLID', 'None at stake: small'].join('\n')
+  expect(parseCard(text, NAMES).solid).toEqual({ rows: [], note: 'None at stake: small' })
 })
 
 test('a name off the list says so, and a link-less name has no verified link', async () => {

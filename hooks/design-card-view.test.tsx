@@ -1,5 +1,6 @@
 import type { On } from 'claude-code'
 import { expect, test } from 'claude-code/testing'
+import { DARK } from './design-card-colors'
 import type { Engine } from 'claude-code/testing'
 
 const PLUGIN = 'dry-run'
@@ -34,7 +35,8 @@ const DRY_RUN = [
   '### 2. Change table',
   '| a.ts | edit | why |',
   '### 3. SOLID',
-  'None at stake: small',
+  '║ Principle ║ Where ║ Why ║',
+  '║ Single Responsibility ║ card.ts ║ one job ║',
   '### 4. Pattern',
   '**Chosen:** Strategy',
   'Two variants exist.',
@@ -92,11 +94,13 @@ test('the pane shows the four boxes on every surface', async ($, on) => {
   for (const surface of ['terminal', 'desktop', 'vscode', 'mobile'] as const) {
     const all = await paneTexts($, surface)
     expect(all).toContain('show the gate')
-    expect(all).toContain('None at stake: small')
+    expect(all).toContain('Single Responsibility')
+    expect(all).toContain('one job')
     expect(all).toContain('Strategy')
     expect(all).toContain('Bloom filter')
     expect(all).toContain('not on list · no verified link')
-    expect(all).toContain('Big-O: O(1).')
+    expect(all).toContain('O(1).')
+    expect(all).not.toContain('Big-O:')
   }
 })
 
@@ -165,7 +169,7 @@ test('the band shows the gate pill and the section pills', async ($, on) => {
   await ui.unmount()
 
   expect(all).toContain('✻ dry-run')
-  expect(all).toContain('⊘ locked')
+  expect(all).toContain('⊘ GATE LOCKED')
   expect(all).toContain('◆ Goal')
   expect(all).toContain('◆ SOLID')
   expect(all).toContain('◆ Pattern')
@@ -179,7 +183,7 @@ test('the band shows an open gate', async ($, on) => {
   const all = (await ui.findAll({ type: 'Text' })).map(node => node.text).join('')
   await ui.unmount()
 
-  expect(all).toContain('✓ open')
+  expect(all).toContain('✓ GATE OPEN')
 })
 
 test('the band is left to the engine while off', async ($, on) => {
@@ -192,4 +196,71 @@ test('the band is left to the engine while off', async ($, on) => {
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
   expect((await ui.find({ type: 'Text', text: /engine/ }))?.text).toBe('engine')
   await ui.unmount()
+})
+
+test('the band names done sections in the Claude color on a tint', async ($, on) => {
+  seedState(on, { text: DRY_RUN })
+
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  const goal = await ui.find({ type: 'Text', text: /◆ Goal/ })
+  const title = await ui.find({ type: 'Text', text: /dry-run/ })
+  await ui.unmount()
+
+  expect(goal?.props.color).toBe(DARK.claude)
+  expect(goal?.props.backgroundColor).toBe(DARK.claudeBg)
+  expect(title?.props.bold).toBe(true)
+})
+
+test('the pane puts each name in a pill and keeps its why dim', async ($, on) => {
+  seedState(on, { text: DRY_RUN })
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const solid = await ui.find({ type: 'Text', text: /Single Responsibility/ })
+  const pattern = await ui.find({ type: 'Text', text: /Strategy/ })
+  const why = await ui.find({ type: 'Text', text: /one job/ })
+  const bigO = await ui.find({ type: 'Text', text: /O\(1\)/ })
+  await ui.unmount()
+
+  expect(solid?.props.backgroundColor).toBe(DARK.claude)
+  expect(pattern?.props.backgroundColor).toBe(DARK.violetBg)
+  expect(why?.props.dimColor).toBe(true)
+  expect(bigO?.props.dimColor).toBe(true)
+})
+
+test('a LeetCode row has a blue mark and a level colored by difficulty', async ($, on) => {
+  seedState(on, { text: DRY_RUN })
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const mark = await ui.find({ type: 'Text', text: /○/ })
+  const level = await ui.find({ type: 'Text', text: /^E/ })
+  await ui.unmount()
+
+  expect(mark?.props.color).toBe(DARK.blue)
+  expect(level?.props.color).toBe(DARK.green)
+})
+
+test('the title is bold and Design Card is dim', async ($, on) => {
+  seedState(on, {})
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const name = await ui.find({ type: 'Text', text: /Design Card/ })
+  await ui.unmount()
+
+  expect(name?.props.dimColor).toBe(true)
+})
+
+test('Go has a hint for the other ways to approve', async ($, on) => {
+  seedState(on, { isWaiting: true, text: DRY_RUN })
+
+  expect(await paneTexts($, 'terminal')).toContain('or type /go · "go ahead"')
+})
+
+test('the approved line is a green pill', async ($, on) => {
+  seedState(on, { isOpen: true, text: DRY_RUN })
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const approved = await ui.find({ type: 'Text', text: /Approved/ })
+  await ui.unmount()
+
+  expect(approved?.props.backgroundColor).toBe(DARK.greenBg)
 })
