@@ -3,7 +3,7 @@ import { namesLockedFile, namesSwitchFile } from './bash-scan'
 import { isDryRun } from './dry-run-check'
 import { isLocked } from './gate-path'
 import type { LockRules } from './gate-path'
-import { emptyRepoFile, lockRulesFor, parseRepoFile } from './repo-file'
+import { emptyRepoFile, lockRulesFor, parseRepoFile, restoreRepoFile } from './repo-file'
 import type { ParseResult, RepoFile } from './repo-file'
 import { goWordKind } from './go-word'
 import { candidateRoots, isSwitchFile, UNKNOWN_ROOT } from './switch-file'
@@ -93,11 +93,7 @@ async function repoFileOf($: EngineInterface): Promise<RepoFile> {
   if (typeof read.value !== 'string' || read.value === '') {
     return emptyRepoFile()
   }
-  try {
-    return JSON.parse(read.value) as RepoFile
-  } catch {
-    return emptyRepoFile()
-  }
+  return restoreRepoFile(read.value)
 }
 
 async function isSessionSet($: EngineInterface): Promise<boolean> {
@@ -170,10 +166,22 @@ async function mustDeny($: EngineInterface, path: unknown): Promise<boolean> {
   return !(await isOpen($))
 }
 
-// Fail closed. If the guard threw before next, deny. If next already ran, replay it.
-// The handler is written inside each .catch, because the engine types its `next`
-// per matched tool. A shared function with a plain Next type does not fit.
-const DENY_CALL = { deny: DENY_TEXT }
+// Fail closed. If the guard threw before next, answer with the deny. If next
+// already ran, replay it.
+function failClosed<E, R>(next: ((e: E) => Promise<R>) & { called: boolean }, e: E, deny: R): Promise<R> | R {
+  return next.called ? next(e) : deny
+}
+
+// The answer of a tool.call hook that threw before next: deny the call.
+const FAIL_CLOSED_CALL = { deny: DENY_TEXT }
+
+// The `command` of a Bash input, or undefined when the input has none.
+function commandOf(input: unknown): unknown {
+  if (typeof input === 'object' && input !== null && 'command' in input) {
+    return input.command
+  }
+  return undefined
+}
 
 // True when this Bash call must be denied. Throws when the call has no command.
 // A call with `isReadOnly` set is a read, so it is never denied.
@@ -181,8 +189,7 @@ async function mustDenyBash($: EngineInterface, e: Args<'tool.check'>): Promise<
   if (e.isReadOnly === true) {
     return false
   }
-  const input = e.input as Record<string, unknown> | undefined
-  const command = input?.command
+  const command = commandOf(e.input)
   // The switch file is locked in every mode. No command throws, even when off.
   if (namesSwitchFile(command, await switchFileCheck($))) {
     return !(await isOpen($))
@@ -193,7 +200,8 @@ async function mustDenyBash($: EngineInterface, e: Args<'tool.check'>): Promise<
   return namesLockedFile(command, await homeDir($), await lockRulesOf($)) && !(await isOpen($))
 }
 
-const DENY_CHECK = { decision: 'deny' as const, reason: DENY_TEXT }
+// The answer of a tool.check hook that threw before next: deny the check.
+const FAIL_CLOSED_CHECK: { decision: 'deny'; reason: string } = { decision: 'deny', reason: DENY_TEXT }
 
 async function registerStopCommand($: EngineInterface): Promise<void> {
   const description = 'Lock the gate again. Edits to code files need a new /go.'
@@ -372,16 +380,13 @@ function isFromPerson(e: Args<'prompt.submit'>): boolean {
 
 // Event types do not list agentId on every event. It is set only inside a subagent.
 function isMainLoop(e: object): boolean {
-  return (e as Record<string, unknown>).agentId === undefined
+  return !('agentId' in e) || e.agentId === undefined
 }
 
-// Locks the gate when the event has `field` equal to `value`, and reads the repo
-// file again. Used for "clear".
-async function lockWhen($: EngineInterface, e: object, field: string, value: string): Promise<void> {
-  if ((e as Record<string, unknown>)[field] === value) {
-    await lockGate($)
-    await loadRepoFile($)
-  }
+// A clear: lock the gate and read the repo file again.
+async function lockOnClear($: EngineInterface): Promise<void> {
+  await lockGate($)
+  await loadRepoFile($)
 }
 
 async function lockGate($: EngineInterface) {
@@ -401,11 +406,15 @@ export const register: Register = on => {
   // The classic SessionStart with source "clear" is the second signal. Either one
   // locks the gate. /dry-run off stays: it holds for the whole session.
   on('session.end', async ($, e, next) => {
-    await lockWhen($, e, 'reason', 'clear')
+    if (e.reason === 'clear') {
+      await lockOnClear($)
+    }
     return next(e)
   })
   on('classic.SessionStart', async ($, e, next) => {
-    await lockWhen($, e, 'source', 'clear')
+    if (e.source === 'clear') {
+      await lockOnClear($)
+    }
     return next(e)
   })
 
@@ -413,24 +422,23 @@ export const register: Register = on => {
   // narrow the call. A loop over a list of names gives it a union it cannot match.
   on('tool.call', { tool: 'Edit' }, async ($, e, next) => {
     return (await mustDeny($, e.file_path)) ? { deny: DENY_TEXT } : next(e)
-  }).catch(($, e, next) => (next.called ? next(e) : DENY_CALL))
+  }).catch(($, e, next) => failClosed(next, e, FAIL_CLOSED_CALL))
   on('tool.call', { tool: 'Write' }, async ($, e, next) => {
     return (await mustDeny($, e.file_path)) ? { deny: DENY_TEXT } : next(e)
-  }).catch(($, e, next) => (next.called ? next(e) : DENY_CALL))
+  }).catch(($, e, next) => failClosed(next, e, FAIL_CLOSED_CALL))
   on('tool.call', { tool: 'NotebookEdit' }, async ($, e, next) => {
     return (await mustDeny($, e.notebook_path)) ? { deny: DENY_TEXT } : next(e)
-  }).catch(($, e, next) => (next.called ? next(e) : DENY_CALL))
+  }).catch(($, e, next) => failClosed(next, e, FAIL_CLOSED_CALL))
 
   // Bash may write a file. Deny when it names a locked file and is not read-only.
   on('tool.check', { tool: 'Bash' }, async ($, e, next) => {
     return (await mustDenyBash($, e)) ? { decision: 'deny', reason: DENY_TEXT } : next(e)
-  }).catch(($, e, next) => (next.called ? next(e) : DENY_CHECK))
+  }).catch(($, e, next) => failClosed(next, e, FAIL_CLOSED_CHECK))
 
   // A dry run posted by the main thread locks the gate and waits for a go.
   // Lock first, then next(e): if next throws, the gate is already locked.
   on('turn.complete', async ($, e, next) => {
-    const answer = (e as Record<string, unknown>).answer
-    if (isMainLoop(e) && !(await isOff($)) && isDryRun(answer, EXPLAIN_LANGUAGE)) {
+    if (isMainLoop(e) && !(await isOff($)) && isDryRun(e.answer, EXPLAIN_LANGUAGE)) {
       await waitForGo($)
     }
     return next(e)

@@ -1,23 +1,25 @@
+import type { AgentLoop, Args, On, ToolCallArgs } from 'claude-code'
 import { expect, test } from 'claude-code/testing'
+import type { Engine } from 'claude-code/testing'
 
 // Written out here on purpose: the test must not share the mod's constant.
 const DENY_TEXT =
   'dry-run mod: edits locked. Post a "## Dry run" and wait for /go. (User escape: /dry-run off)'
 
 // What the engine adds to a command the person typed.
-const TYPED = { args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 80 } } as const
+const TYPED = { args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 80 } } satisfies Omit<Args<'command.run'>, 'command'>
 
-function run($: any, command: string) {
+function run($: Engine, command: string) {
   return $.command.run({ command, ...TYPED })
 }
 
-const EDIT_LOCKED = { tool: 'Edit', file_path: 'src/Foo.py', old_string: 'a', new_string: 'b' } as const
+const EDIT_LOCKED = { tool: 'Edit', file_path: 'src/Foo.py', old_string: 'a', new_string: 'b' } satisfies ToolCallArgs
+const EDIT_FREE = { tool: 'Edit', file_path: 'README.md', old_string: 'a', new_string: 'b' } satisfies ToolCallArgs
+
 // A full SessionEndInput: the engine always sends the session id and the resume id.
 function sessionEnd(reason: 'clear' | 'other') {
   return { reason, sessionId: 'session-1', resume: { id: 'session-1' } }
 }
-
-const EDIT_FREE = { tool: 'Edit', file_path: 'README.md', old_string: 'a', new_string: 'b' } as const
 
 type Stubs = {
   version?: string
@@ -28,14 +30,17 @@ type Stubs = {
   // The text of `<gitRoot>/.claude/dry-run.json`. Undefined means the file is not there.
   repoFile?: string
   readThrows?: boolean
+  // The tool.call stub beneath the mod throws.
+  toolCallThrows?: boolean
 }
 
 // Each hook here stands for the engine, beneath the mod.
 // The mod forwards each of these events with next(e), so each needs a stub.
-function stubEngine(on: any, stubs: Stubs = {}) {
+function stubEngine(on: On, stubs: Stubs = {}) {
   const toasts: string[] = []
   const registered: string[] = []
   const reads: string[] = []
+  let isStateBroken = false
   on('session.start', (_: unknown, e: { cwd: string }) => ({ cwd: e.cwd }))
   on('session.version', () => ({ value: { version: stubs.version ?? '2.1.326' } }))
   on('command.register', (_: unknown, e: { name: string }) => {
@@ -52,7 +57,7 @@ function stubEngine(on: any, stubs: Stubs = {}) {
   on('env.get', (_: unknown, e: { name: string }) => ({ value: e.name === 'HOME' ? (stubs.home ?? '/Users/me') : undefined }))
   on('session.end', () => ({ sessionId: 's1' }))
   on('classic.SessionStart', () => ({}))
-  on('session.compact', (_: unknown, e: { messages: unknown[] }) => ({ messages: e.messages }))
+  on('session.compact', (_: unknown, e: Args<'session.compact'>) => ({ messages: e.messages }))
   // The folder that holds `.git`. Only this one exists, so the walk finds it.
   on('fs.exists', (_: unknown, e: { path: string }) => {
     if (stubs.existsThrows) {
@@ -69,14 +74,21 @@ function stubEngine(on: any, stubs: Stubs = {}) {
     }
     return { value: stubs.repoFile ?? '' }
   })
-  on('tool.call', () => ({ result: {} }))
+  // Once broken, every state read throws, so each guard throws before it calls next.
+  on('state.get', (_, e, next) => (isStateBroken ? { deny: 'state down' } : next(e)))
+  on('tool.call', () => {
+    if (stubs.toolCallThrows) {
+      throw new Error('beneath failed')
+    }
+    return { result: {} }
+  })
   on('tool.check', () => ({ decision: 'allow', reason: 'stub' }))
   on('prompt.submit', (_: unknown, e: { text: string }) => ({ text: e.text }))
   on('turn.complete', (_: unknown, e: { answer: string }) => ({ text: e.answer }))
-  return { toasts, registered, reads }
+  return { toasts, registered, reads, breakState: () => { isStateBroken = true } }
 }
 
-async function start($: any, cwd: string = '/') {
+async function start($: Engine, cwd: string = '/') {
   await $.session.start({ cwd, surface: 'terminal', isInteractive: true })
 }
 
@@ -92,10 +104,8 @@ test('Write and NotebookEdit on a locked file are denied', async ($, on) => {
   stubEngine(on)
   await start($)
 
-  const write = { tool: 'Write', file_path: 'src/Foo.py', content: 'x' }
-  const notebook = { tool: 'NotebookEdit', notebook_path: 'a/nb.ipynb', new_source: 'x' }
-  expect(await $.tool.call(write as never)).toEqual({ deny: DENY_TEXT })
-  expect(await $.tool.call(notebook as never)).toEqual({ deny: DENY_TEXT })
+  expect(await $.tool.call(WRITE_LOCKED)).toEqual({ deny: DENY_TEXT })
+  expect(await $.tool.call(NOTEBOOK_LOCKED)).toEqual({ deny: DENY_TEXT })
 })
 
 test('/go opens the gate and /stop locks it again', async ($, on) => {
@@ -119,21 +129,41 @@ test('a new session locks the gate again', async ($, on) => {
   expect(await $.tool.call(EDIT_LOCKED)).toEqual({ deny: DENY_TEXT })
 })
 
-test('fail closed: a call with no path is denied', async ($, on) => {
-  stubEngine(on)
-  await start($)
+const WRITE_LOCKED = { tool: 'Write', file_path: 'src/Foo.py', content: 'x' } satisfies ToolCallArgs
+const NOTEBOOK_LOCKED = { tool: 'NotebookEdit', notebook_path: 'a/nb.ipynb', new_source: 'x' } satisfies ToolCallArgs
 
-  expect(await $.tool.call({ tool: 'Edit', old_string: 'a', new_string: 'b' } as never)).toEqual({ deny: DENY_TEXT })
-  expect(await $.tool.call({ tool: 'Write', content: 'x' } as never)).toEqual({ deny: DENY_TEXT })
-  expect(await $.tool.call({ tool: 'NotebookEdit', new_source: 'x' } as never)).toEqual({ deny: DENY_TEXT })
-})
-
-test('fail closed: an open gate still denies a call with no path', async ($, on) => {
-  stubEngine(on)
+test('fail closed: an Edit, Write or NotebookEdit hook that throws denies the call', async ($, on) => {
+  const { breakState } = stubEngine(on)
   await start($)
   await run($, 'go')
+  breakState()
 
-  expect(await $.tool.call({ tool: 'Edit', old_string: 'a', new_string: 'b' } as never)).toEqual({ deny: DENY_TEXT })
+  expect(await $.tool.call(EDIT_FREE)).toEqual({ deny: DENY_TEXT })
+  expect(await $.tool.call(WRITE_LOCKED)).toEqual({ deny: DENY_TEXT })
+  expect(await $.tool.call(NOTEBOOK_LOCKED)).toEqual({ deny: DENY_TEXT })
+})
+
+// The stub beneath throws and is skipped, so next(e) rejects with the engine's
+// own error, not the stub's. The call fails with that error instead of a deny.
+test('fail closed: when the hook fails after next ran, the call fails with that error, not a deny', async ($, on) => {
+  stubEngine(on, { toolCallThrows: true })
+  await start($)
+
+  const outcome = await $.tool.call(EDIT_FREE).then(
+    answer => ({ answer, error: '' }),
+    (error: unknown) => ({ answer: undefined, error: error instanceof Error ? `${error.name}: ${error.message}` : 'not an error' })
+  )
+
+  expect(outcome).toEqual({ answer: undefined, error: 'HooksError: no implementation for tool.call' })
+})
+
+test('fail closed: a Bash check that throws denies the check', async ($, on) => {
+  const { breakState } = stubEngine(on)
+  await start($)
+  await run($, 'go')
+  breakState()
+
+  expect(await $.tool.check(BASH_SAFE)).toEqual({ decision: 'deny', reason: DENY_TEXT })
 })
 
 test('an engine older than 2.1.304 gets a toast and the mod stays off', async ($, on) => {
@@ -174,8 +204,8 @@ test('a repo plans folder is locked, the home plans folder is free', async ($, o
   stubEngine(on, { home: '/Users/me' })
   await start($)
 
-  const repoPlans = { tool: 'Edit', file_path: '/repo/.claude/plans/x.py', old_string: 'a', new_string: 'b' } as const
-  const homePlans = { tool: 'Edit', file_path: '/Users/me/.claude/plans/x.py', old_string: 'a', new_string: 'b' } as const
+  const repoPlans = { tool: 'Edit', file_path: '/repo/.claude/plans/x.py', old_string: 'a', new_string: 'b' } satisfies ToolCallArgs
+  const homePlans = { tool: 'Edit', file_path: '/Users/me/.claude/plans/x.py', old_string: 'a', new_string: 'b' } satisfies ToolCallArgs
   expect(await $.tool.call(repoPlans)).toEqual({ deny: DENY_TEXT })
   expect(await $.tool.call(homePlans)).toEqual({ result: {} })
 })
@@ -184,7 +214,7 @@ test('the session scratchpad is free', async ($, on) => {
   stubEngine(on)
   await start($)
 
-  const scratch = { tool: 'Edit', file_path: '/private/tmp/claude-501/p/s1/scratchpad/a.py', old_string: 'a', new_string: 'b' } as const
+  const scratch = { tool: 'Edit', file_path: '/private/tmp/claude-501/p/s1/scratchpad/a.py', old_string: 'a', new_string: 'b' } satisfies ToolCallArgs
   expect(await $.tool.call(scratch)).toEqual({ result: {} })
 })
 
@@ -212,12 +242,12 @@ const DRY_RUN = [
 
 const NO_DRY_RUN = '## Dry run\n### 1. Bug and goal\nonly two headings'
 
-function submit($: any, text: string, extra: object = {}) {
+function submit($: Engine, text: string, extra: object = {}) {
   return $.prompt.submit({ text, wait: false, origin: { kind: 'composer' }, ...extra })
 }
 
-function complete($: any, answer: string, extra: object = {}) {
-  return $.turn.complete({ answer, reason: 'answer', ...extra })
+function complete($: Engine, answer: string, extra: object = {}) {
+  return $.turn.complete({ answer, reason: 'answer', durationMs: 0, isAborted: false, turnId: 'turn-1', ...extra })
 }
 
 test('a dry run locks the gate, a go word opens it', async ($, on) => {
@@ -363,63 +393,63 @@ test('just do it with the gate already open passes through and the gate stays op
 
 // ---- Bash deny (ticket 23) ----
 
-const BASH_WRITE = { tool: 'Bash', input: { command: 'echo x > src/foo.py' } } as const
-const BASH_SAFE = { tool: 'Bash', input: { command: 'pytest tests/' } } as const
+const BASH_WRITE = { tool: 'Bash', input: { command: 'echo x > src/foo.py' } } satisfies Args<'tool.check'>
+const BASH_SAFE = { tool: 'Bash', input: { command: 'pytest tests/' } } satisfies Args<'tool.check'>
 
 test('Bash: a command that writes a locked file is denied with the deny text', async ($, on) => {
   stubEngine(on)
   await start($)
 
-  expect(await $.tool.check(BASH_WRITE as never)).toEqual({ decision: 'deny', reason: DENY_TEXT })
-  expect((await $.tool.check(BASH_SAFE as never)).decision).toBe('allow')
+  expect(await $.tool.check(BASH_WRITE)).toEqual({ decision: 'deny', reason: DENY_TEXT })
+  expect((await $.tool.check(BASH_SAFE)).decision).toBe('allow')
 })
 
 test('Bash: a read-only command that names a locked file is allowed', async ($, on) => {
   stubEngine(on)
   await start($)
 
-  const read = { tool: 'Bash', input: { command: 'cat src/foo.py' }, isReadOnly: true }
-  expect((await $.tool.check(read as never)).decision).toBe('allow')
+  const read = { tool: 'Bash', input: { command: 'cat src/foo.py' }, isReadOnly: true } satisfies Args<'tool.check'>
+  expect((await $.tool.check(read)).decision).toBe('allow')
 })
 
 test('Bash: after /go the write is allowed, after /stop it is denied again', async ($, on) => {
   stubEngine(on)
   await start($)
   await run($, 'go')
-  expect((await $.tool.check(BASH_WRITE as never)).decision).toBe('allow')
+  expect((await $.tool.check(BASH_WRITE)).decision).toBe('allow')
 
   await run($, 'stop')
-  expect((await $.tool.check(BASH_WRITE as never)).decision).toBe('deny')
+  expect((await $.tool.check(BASH_WRITE)).decision).toBe('deny')
 })
 
 test('Bash: when the mod is off, a write is allowed', async ($, on) => {
   stubEngine(on, { version: '2.1.200' })
   await start($)
 
-  expect((await $.tool.check(BASH_WRITE as never)).decision).toBe('allow')
+  expect((await $.tool.check(BASH_WRITE)).decision).toBe('allow')
 })
 
 test('fail closed: a Bash call with no command is denied, even with the gate open', async ($, on) => {
   stubEngine(on)
   await start($)
-  expect(await $.tool.check({ tool: 'Bash', input: {} } as never)).toEqual({ decision: 'deny', reason: DENY_TEXT })
+  expect(await $.tool.check({ tool: 'Bash', input: {} })).toEqual({ decision: 'deny', reason: DENY_TEXT })
 
   await run($, 'go')
-  expect(await $.tool.check({ tool: 'Bash', input: {} } as never)).toEqual({ decision: 'deny', reason: DENY_TEXT })
+  expect(await $.tool.check({ tool: 'Bash', input: {} })).toEqual({ decision: 'deny', reason: DENY_TEXT })
 })
 
 // ---- session lifecycle and /dry-run (ticket 24) ----
 
 // What a typed `/dry-run off` carries: the same fields as TYPED plus the args.
-async function dryRun($: any, args: string): Promise<{ text: string }> {
+async function dryRun($: Engine, args: string): Promise<{ text?: string }> {
   return $.command.run({ command: 'dry-run', ...TYPED, args })
 }
 
-const SWITCH = { tool: 'Edit', file_path: '/repo/.claude/dry-run.json', old_string: 'a', new_string: 'b' } as const
-const BASH_SWITCH = { tool: 'Bash', input: { command: 'echo {} > /repo/.claude/dry-run.json' } } as const
-const SUBAGENT_EDIT = { ...EDIT_LOCKED, agentId: 'a1' } as const
+const SWITCH = { tool: 'Edit', file_path: '/repo/.claude/dry-run.json', old_string: 'a', new_string: 'b' } satisfies ToolCallArgs
+const BASH_SWITCH = { tool: 'Bash', input: { command: 'echo {} > /repo/.claude/dry-run.json' } } satisfies Args<'tool.check'>
+const SUBAGENT_EDIT = { ...EDIT_LOCKED, agentId: 'a1' } satisfies ToolCallArgs & AgentLoop
 
-async function startInRepo($: any, on: any, stubs: Stubs = {}) {
+async function startInRepo($: Engine, on: On, stubs: Stubs = {}) {
   stubEngine(on, { gitRoot: '/repo', ...stubs })
   await start($, '/repo/src')
 }
@@ -505,7 +535,7 @@ test('a compact keeps the gate open', async ($, on) => {
   await start($)
   await run($, 'go')
 
-  const message = { role: 'user' as const, content: [], text: 'hi', toolUses: [] }
+  const message: Args<'session.compact'>['messages'][number] = { role: 'user', text: 'hi', toolUses: [] }
   await $.session.compact({ trigger: 'auto', messages: [message] })
 
   expect(await $.tool.call(EDIT_LOCKED)).toEqual({ result: {} })
@@ -515,11 +545,11 @@ test('one lock for every agent: a subagent is denied while locked, allowed after
   stubEngine(on)
   await start($)
 
-  expect(await $.tool.call(SUBAGENT_EDIT as never)).toEqual({ deny: DENY_TEXT })
+  expect(await $.tool.call(SUBAGENT_EDIT)).toEqual({ deny: DENY_TEXT })
   await run($, 'go')
-  expect(await $.tool.call(SUBAGENT_EDIT as never)).toEqual({ result: {} })
+  expect(await $.tool.call(SUBAGENT_EDIT)).toEqual({ result: {} })
   await run($, 'stop')
-  expect(await $.tool.call(SUBAGENT_EDIT as never)).toEqual({ deny: DENY_TEXT })
+  expect(await $.tool.call(SUBAGENT_EDIT)).toEqual({ deny: DENY_TEXT })
 })
 
 test('a subagent Bash write is denied while locked', async ($, on) => {
@@ -527,15 +557,15 @@ test('a subagent Bash write is denied while locked', async ($, on) => {
   await start($)
 
   const bash = { ...BASH_WRITE, agentId: 'a1' }
-  expect((await $.tool.check(bash as never)).decision).toBe('deny')
+  expect((await $.tool.check(bash)).decision).toBe('deny')
 })
 
 test('switch file: locked even when no dry run waits, a go opens it', async ($, on) => {
   await startInRepo($, on)
 
-  expect(await $.tool.call(SWITCH as never)).toEqual({ deny: DENY_TEXT })
+  expect(await $.tool.call(SWITCH)).toEqual({ deny: DENY_TEXT })
   await run($, 'go')
-  expect(await $.tool.call(SWITCH as never)).toEqual({ result: {} })
+  expect(await $.tool.call(SWITCH)).toEqual({ result: {} })
 })
 
 test('switch file: still locked under /dry-run off, while code files are free', async ($, on) => {
@@ -543,37 +573,37 @@ test('switch file: still locked under /dry-run off, while code files are free', 
   await dryRun($, 'off')
 
   expect(await $.tool.call(EDIT_LOCKED)).toEqual({ result: {} })
-  expect(await $.tool.call(SWITCH as never)).toEqual({ deny: DENY_TEXT })
+  expect(await $.tool.call(SWITCH)).toEqual({ deny: DENY_TEXT })
   await run($, 'go')
-  expect(await $.tool.call(SWITCH as never)).toEqual({ result: {} })
+  expect(await $.tool.call(SWITCH)).toEqual({ result: {} })
 })
 
 test('switch file: a relative path counts from the working folder', async ($, on) => {
   await startInRepo($, on)
 
-  const relative = { tool: 'Write', file_path: '../.claude/dry-run.json', content: '{}' }
-  expect(await $.tool.call(relative as never)).toEqual({ deny: DENY_TEXT })
+  const relative = { tool: 'Write', file_path: '../.claude/dry-run.json', content: '{}' } satisfies ToolCallArgs
+  expect(await $.tool.call(relative)).toEqual({ deny: DENY_TEXT })
 })
 
 test('switch file: Write and NotebookEdit are denied too', async ($, on) => {
   await startInRepo($, on)
 
-  const write = { tool: 'Write', file_path: '/repo/.claude/dry-run.json', content: '{}' }
-  const notebook = { tool: 'NotebookEdit', notebook_path: '/repo/.claude/dry-run.json', new_source: '{}' }
-  expect(await $.tool.call(write as never)).toEqual({ deny: DENY_TEXT })
-  expect(await $.tool.call(notebook as never)).toEqual({ deny: DENY_TEXT })
+  const write = { tool: 'Write', file_path: '/repo/.claude/dry-run.json', content: '{}' } satisfies ToolCallArgs
+  const notebook = { tool: 'NotebookEdit', notebook_path: '/repo/.claude/dry-run.json', new_source: '{}' } satisfies ToolCallArgs
+  expect(await $.tool.call(write)).toEqual({ deny: DENY_TEXT })
+  expect(await $.tool.call(notebook)).toEqual({ deny: DENY_TEXT })
 })
 
 test('switch file: a Bash write is denied, also under /dry-run off', async ($, on) => {
   await startInRepo($, on)
-  expect((await $.tool.check(BASH_SWITCH as never)).decision).toBe('deny')
+  expect((await $.tool.check(BASH_SWITCH)).decision).toBe('deny')
 
   await dryRun($, 'off')
-  expect((await $.tool.check(BASH_SWITCH as never)).decision).toBe('deny')
-  expect((await $.tool.check(BASH_WRITE as never)).decision).toBe('allow')
+  expect((await $.tool.check(BASH_SWITCH)).decision).toBe('deny')
+  expect((await $.tool.check(BASH_WRITE)).decision).toBe('allow')
 
   await run($, 'go')
-  expect((await $.tool.check(BASH_SWITCH as never)).decision).toBe('allow')
+  expect((await $.tool.check(BASH_SWITCH)).decision).toBe('allow')
 })
 
 test('switch file: just do it with no dry run waiting opens it', async ($, on) => {
@@ -581,29 +611,28 @@ test('switch file: just do it with no dry run waiting opens it', async ($, on) =
 
   await submit($, 'just do it')
 
-  expect(await $.tool.call(SWITCH as never)).toEqual({ result: {} })
+  expect(await $.tool.call(SWITCH)).toEqual({ result: {} })
 })
 
 test('switch file: another repo file named dry-run.json is free', async ($, on) => {
   await startInRepo($, on)
 
-  const other = { tool: 'Edit', file_path: '/repo/src/.claude/dry-run.json', old_string: 'a', new_string: 'b' }
-  expect(await $.tool.call(other as never)).toEqual({ result: {} })
+  const other = { tool: 'Edit', file_path: '/repo/src/.claude/dry-run.json', old_string: 'a', new_string: 'b' } satisfies ToolCallArgs
+  expect(await $.tool.call(other)).toEqual({ result: {} })
 })
 
 test('switch file: with no git root there is no switch file', async ($, on) => {
   stubEngine(on)
   await start($, '/repo/src')
 
-  expect(await $.tool.call(SWITCH as never)).toEqual({ result: {} })
+  expect(await $.tool.call(SWITCH)).toEqual({ result: {} })
 })
 
-test('fail closed: under /dry-run off a call with no path or no command is still denied', async ($, on) => {
+test('fail closed: under /dry-run off a call with no command is still denied', async ($, on) => {
   await startInRepo($, on)
   await dryRun($, 'off')
 
-  expect(await $.tool.call({ tool: 'Edit', old_string: 'a', new_string: 'b' } as never)).toEqual({ deny: DENY_TEXT })
-  const noCommand = await $.tool.check({ tool: 'Bash', input: {} } as never)
+  const noCommand = await $.tool.check({ tool: 'Bash', input: {} })
   expect(noCommand).toEqual({ decision: 'deny', reason: DENY_TEXT })
 })
 
@@ -611,15 +640,15 @@ test('fail closed: when the git root lookup fails, any path ending in .claude/dr
   stubEngine(on, { existsThrows: true })
   await start($, '/repo/src')
 
-  expect(await $.tool.call(SWITCH as never)).toEqual({ deny: DENY_TEXT })
-  expect((await $.tool.check(BASH_SWITCH as never)).decision).toBe('deny')
+  expect(await $.tool.call(SWITCH)).toEqual({ deny: DENY_TEXT })
+  expect((await $.tool.check(BASH_SWITCH)).decision).toBe('deny')
   expect(await $.tool.call(EDIT_FREE)).toEqual({ result: {} })
 })
 
 test('fail closed: before any session.start the switch file is locked by its ending', async ($, on) => {
   stubEngine(on)
 
-  expect(await $.tool.call(SWITCH as never)).toEqual({ deny: DENY_TEXT })
+  expect(await $.tool.call(SWITCH)).toEqual({ deny: DENY_TEXT })
 })
 
 // ---- repo file (ticket 25) ----
@@ -628,7 +657,7 @@ const GATE_DOWN_SOFT = 'Repo sets dry-run mod: soft. `/dry-run on` to lock.'
 const GATE_DOWN_OFF = 'Repo sets dry-run mod: off. `/dry-run on` to lock.'
 
 function startWithRepoFile(text: string, stubs: Stubs = {}) {
-  return async ($: any, on: any) => {
+  return async ($: Engine, on: On) => {
     const seen = stubEngine(on, { gitRoot: '/repo', repoFile: text, ...stubs })
     await start($, '/repo/src')
     return seen
@@ -702,8 +731,8 @@ test('repo on: /dry-run off frees the gate and wins', async ($, on) => {
 test('repo file lock and unlock feed the path check, for Edit and for Bash', async ($, on) => {
   const text = '{ "lock": [".yaml"], "unlock": ["generated/", ".sql"] }'
   const { toasts } = await startWithRepoFile(text)($, on)
-  const edit = (file_path: string) => $.tool.call({ tool: 'Edit', file_path, old_string: 'a', new_string: 'b' } as never)
-  const bash = (command: string) => $.tool.check({ tool: 'Bash', input: { command } } as never)
+  const edit = (file_path: string) => $.tool.call({ tool: 'Edit', file_path, old_string: 'a', new_string: 'b' })
+  const bash = (command: string) => $.tool.check({ tool: 'Bash', input: { command } })
 
   expect(await edit('/repo/ci.yaml')).toEqual({ deny: DENY_TEXT })
   expect(await edit('/repo/generated/a.py')).toEqual({ result: {} })
@@ -727,8 +756,8 @@ test('repo unlock items with .. or absolute paths are ignored, and a toast names
 
   expect(toasts.filter(t => t.includes('../x/')).length).toBe(1)
   expect(toasts.filter(t => t.includes('/etc/')).length).toBe(1)
-  expect(await $.tool.call({ tool: 'Edit', file_path: '/repo/gen/a.py', old_string: 'a', new_string: 'b' } as never)).toEqual({ result: {} })
-  expect(await $.tool.call({ tool: 'Edit', file_path: '/x/a.py', old_string: 'a', new_string: 'b' } as never)).toEqual({ deny: DENY_TEXT })
+  expect(await $.tool.call({ tool: 'Edit', file_path: '/repo/gen/a.py', old_string: 'a', new_string: 'b' })).toEqual({ result: {} })
+  expect(await $.tool.call({ tool: 'Edit', file_path: '/x/a.py', old_string: 'a', new_string: 'b' })).toEqual({ deny: DENY_TEXT })
 })
 
 const BAD_REPO_FILES: [string, string][] = [
@@ -791,7 +820,7 @@ test('the file is read again after /clear: new rules apply, session choice stays
   stubs.repoFile = '{ "mode": "on", "lock": [".yaml"] }'
   await $.session.end(sessionEnd('clear'))
   expect(await $.tool.call(EDIT_LOCKED)).toEqual({ result: {} })
-  expect(await $.tool.call({ tool: 'Edit', file_path: '/repo/a.yaml', old_string: 'a', new_string: 'b' } as never)).toEqual({ result: {} })
+  expect(await $.tool.call({ tool: 'Edit', file_path: '/repo/a.yaml', old_string: 'a', new_string: 'b' })).toEqual({ result: {} })
 })
 
 test('both /clear signals together show a bad-file toast once', async ($, on) => {

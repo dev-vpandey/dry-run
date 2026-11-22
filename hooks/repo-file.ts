@@ -25,7 +25,7 @@ export type RepoFile = {
 export type ParseResult = { file: RepoFile; problems: string[] }
 
 const KNOWN_KEYS = ['mode', 'lock', 'unlock', 'platform']
-const MODES = ['on', 'soft', 'off']
+const MODES: readonly Mode[] = ['on', 'soft', 'off']
 
 // What a repo without a usable file gets.
 export function emptyRepoFile(): RepoFile {
@@ -94,42 +94,49 @@ function cleanItems(key: string, items: string[], problems: string[]): string[] 
   return kept
 }
 
-// The platform block, or null when its shape is bad. A bad shape adds a problem.
-function readPlatform(value: unknown, problems: string[]): Platform | null {
-  const why = platformProblem(value)
-  if (why !== '') {
-    problems.push(`Repo file: "platform" ignored: ${why}.`)
-    return null
-  }
-  const block = value as Record<string, unknown>
-  const paths = textList(block.paths) ?? []
-  return { agent: (block.agent as string).trim(), paths }
-}
-
-// Why the platform value has a bad shape, or '' when it is good.
-function platformProblem(value: unknown): string {
+// The platform block of a value, or the reason its shape is bad. No side effects.
+function checkPlatform(value: unknown): { platform: Platform } | { problem: string } {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    return 'it must be an object with "agent" and "paths"'
+    return { problem: 'it must be an object with "agent" and "paths"' }
   }
-  const block = value as Record<string, unknown>
-  for (const key of Object.keys(block)) {
+  for (const key of Object.keys(value)) {
     if (key !== 'agent' && key !== 'paths') {
-      return `unknown key "${key}"`
+      return { problem: `unknown key "${key}"` }
     }
   }
-  if (typeof block.agent !== 'string' || block.agent.trim() === '') {
-    return '"agent" must be a name'
+  if (!('agent' in value) || typeof value.agent !== 'string' || value.agent.trim() === '') {
+    return { problem: '"agent" must be a name' }
   }
-  const paths = textList(block.paths)
+  const paths = 'paths' in value ? textList(value.paths) : null
   if (paths === null || paths.length === 0) {
-    return '"paths" must be a list of text with at least one item'
+    return { problem: '"paths" must be a list of text with at least one item' }
   }
   for (const path of paths) {
     if (path.trim() === '') {
-      return '"paths" has an empty item'
+      return { problem: '"paths" has an empty item' }
     }
   }
-  return ''
+  return { platform: { agent: value.agent.trim(), paths } }
+}
+
+// The platform block, or null when its shape is bad. A bad shape adds a problem.
+function readPlatform(value: unknown, problems: string[]): Platform | null {
+  const checked = checkPlatform(value)
+  if ('problem' in checked) {
+    problems.push(`Repo file: "platform" ignored: ${checked.problem}.`)
+    return null
+  }
+  return checked.platform
+}
+
+// The mode this value names, or null when it names none.
+function modeOf(value: unknown): Mode | null {
+  for (const mode of MODES) {
+    if (value === mode) {
+      return mode
+    }
+  }
+  return null
 }
 
 export function parseRepoFile(text: string): ParseResult {
@@ -152,10 +159,11 @@ export function parseRepoFile(text: string): ParseResult {
   const file = emptyRepoFile()
   const problems: string[] = []
   if (map.mode !== undefined) {
-    if (typeof map.mode !== 'string' || !MODES.includes(map.mode)) {
+    const mode = modeOf(map.mode)
+    if (mode === null) {
       return ignored('"mode" must be on, soft or off.')
     }
-    file.mode = map.mode as Mode
+    file.mode = mode
     file.hasMode = true
   }
   for (const key of ['lock', 'unlock'] as const) {
@@ -172,6 +180,35 @@ export function parseRepoFile(text: string): ParseResult {
     file.platform = readPlatform(map.platform, problems)
   }
   return { file, problems }
+}
+
+// A repo file read back from the JSON text the mod stored in session state.
+// Text that is not a whole, valid repo file gives the defaults.
+export function restoreRepoFile(text: string): RepoFile {
+  let data: unknown
+  try {
+    data = JSON.parse(text)
+  } catch {
+    return emptyRepoFile()
+  }
+  if (typeof data !== 'object' || data === null) {
+    return emptyRepoFile()
+  }
+  const mode = 'mode' in data ? modeOf(data.mode) : null
+  const lock = 'lock' in data ? textList(data.lock) : null
+  const unlock = 'unlock' in data ? textList(data.unlock) : null
+  const hasMode = 'hasMode' in data && typeof data.hasMode === 'boolean' ? data.hasMode : null
+  if (mode === null || lock === null || unlock === null || hasMode === null || !('platform' in data)) {
+    return emptyRepoFile()
+  }
+  if (data.platform === null) {
+    return { mode, hasMode, lock, unlock, platform: null }
+  }
+  const checked = checkPlatform(data.platform)
+  if ('problem' in checked) {
+    return emptyRepoFile()
+  }
+  return { mode, hasMode, lock, unlock, platform: checked.platform }
 }
 
 // True when `names` begins with `prefix`.

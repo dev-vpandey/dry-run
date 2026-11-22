@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { parseRepoFile } from './repo-file'
+import { parseRepoFile, restoreRepoFile } from './repo-file'
 
 // What a repo without a usable file gets.
 const DEFAULTS = { mode: 'on', hasMode: false, lock: [], unlock: [], platform: null }
@@ -109,5 +109,29 @@ test('platform: a bad shape ignores only platform, with one problem', () => {
     expect(result.file.lock, name).toEqual(['.yaml'])
     expect(result.problems.length, name).toBe(1)
     expect(result.problems[0], name).toContain('platform')
+  }
+})
+
+test('a stored repo file reads back whole, with a platform block', () => {
+  const file = parseRepoFile('{ "mode": "off", "lock": [".yaml"], "unlock": [".sql"], "platform": { "agent": "r", "paths": ["a/"] } }').file
+  expect(restoreRepoFile(JSON.stringify(file))).toEqual(file)
+  expect(restoreRepoFile(JSON.stringify(parseRepoFile('{}').file))).toEqual(DEFAULTS)
+})
+
+test('stored text that is not a whole repo file gives the defaults', () => {
+  const bad = [
+    'not json',
+    'null',
+    '[]',
+    '{}',
+    '{ "mode": "loud", "hasMode": true, "lock": [], "unlock": [], "platform": null }',
+    '{ "mode": "soft", "hasMode": "yes", "lock": [], "unlock": [], "platform": null }',
+    '{ "mode": "soft", "hasMode": true, "lock": [1], "unlock": [], "platform": null }',
+    '{ "mode": "soft", "hasMode": true, "lock": [], "unlock": "x", "platform": null }',
+    '{ "mode": "soft", "hasMode": true, "lock": [], "unlock": [] }',
+    '{ "mode": "soft", "hasMode": true, "lock": [], "unlock": [], "platform": { "agent": "" } }',
+  ]
+  for (const text of bad) {
+    expect(restoreRepoFile(text)).toEqual(DEFAULTS)
   }
 })
