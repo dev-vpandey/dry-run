@@ -8,6 +8,9 @@ import { linesOf } from './dry-run-check'
 export const PANE_ID = 'design-card'
 export const PANE_TITLE = 'dry-run · Design Card'
 
+// The gate as the status line names it. The view adds 'soft' for the repo's soft mode.
+export type Gate = 'locked' | 'open'
+
 export type SectionName = 'Goal' | 'SOLID' | 'Pattern' | 'DSA'
 
 // Each box name, with the heading of its section in a dry run.
@@ -118,10 +121,11 @@ function whyOf(body: string[]): string {
   return ''
 }
 
-function chosenOf(body: string[]): string {
+// The text after a prefix on the first line that starts with it, or "".
+function valueAfter(body: string[], prefix: string): string {
   for (const line of body) {
-    if (line.startsWith(CHOSEN)) {
-      return line.slice(CHOSEN.length).trim()
+    if (line.startsWith(prefix)) {
+      return line.slice(prefix.length).trim()
     }
   }
   return ''
@@ -154,24 +158,6 @@ function rowsOf(body: string[]): LeetRow[] {
   return rows
 }
 
-function bigOOf(body: string[]): string {
-  for (const line of body) {
-    if (line.startsWith(BIG_O)) {
-      return line.slice(BIG_O.length).trim()
-    }
-  }
-  return ''
-}
-
-function goalOf(body: string[]): string {
-  for (const line of body) {
-    if (line.startsWith(GOAL)) {
-      return line.slice(GOAL.length).trim()
-    }
-  }
-  return ''
-}
-
 // What a box says about its name: "" when fine. A name off the list is shown as such.
 // DSA adds "no verified link" because a name off the list has no row in the rules file.
 function noteOf(name: string, list: string[] | undefined, isDsa: boolean): string {
@@ -191,17 +177,17 @@ export function parseCard(text: string, names: Names | null): Card {
   }
   const patternBody = body.get('Pattern') ?? []
   const dsaBody = body.get('DSA') ?? []
-  const patternName = chosenOf(patternBody)
-  const dsaName = chosenOf(dsaBody)
+  const patternName = valueAfter(patternBody, CHOSEN)
+  const dsaName = valueAfter(dsaBody, CHOSEN)
   return {
-    goal: goalOf(body.get('Goal') ?? []),
+    goal: valueAfter(body.get('Goal') ?? [], GOAL),
     solid: solidText(body.get('SOLID') ?? []),
     pattern: { name: patternName, why: whyOf(patternBody), note: noteOf(patternName, names?.patterns, false) },
     dsa: {
       name: dsaName,
       why: whyOf(dsaBody),
       note: noteOf(dsaName, names?.dsa, true),
-      bigO: bigOOf(dsaBody),
+      bigO: valueAfter(dsaBody, BIG_O),
       rows: rowsOf(dsaBody),
     },
     done: SECTIONS.filter(section => (body.get(section.name) ?? []).length > 0).map(section => section.name),
@@ -212,7 +198,7 @@ export function sectionPills(done: SectionName[]): { name: SectionName; isDone: 
   return SECTIONS.map(section => ({ name: section.name, isDone: done.includes(section.name) }))
 }
 
-export type StatusInput = { gate: 'locked' | 'open'; count: number; isRepo: boolean }
+export type StatusInput = { gate: Gate; count: number; isRepo: boolean }
 
 // The UI status line: gate, count of sections done, and (repo) when the repo set the mode.
 export function statusLineText(input: StatusInput): string {

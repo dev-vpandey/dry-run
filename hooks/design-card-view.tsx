@@ -7,11 +7,12 @@ import type { EngineInterface, Register } from 'claude-code'
 import { tokensFor } from './design-card-colors'
 import type { Tokens } from './design-card-colors'
 import { namesOf, PANE_ID, parseCard, repoUnlockLine, sectionPills } from './design-card'
-import type { Card, Names } from './design-card'
+import type { Card, Gate, Names } from './design-card'
 import { emptyRepoFile, restoreRepoFile } from './repo-file'
 import { lockGate, openGate } from './register'
 
-// The same state the gate module writes. Both name each key as a literal.
+// The same state the gate module writes. The engine needs each key spelled as a literal at the
+// atom call, so these cannot share the constants of register.ts. Keep the keys in step.
 const isOpen = atom({ plugin: 'dry-run', key: 'isOpen' } as const, false)
 const isOff = atom({ plugin: 'dry-run', key: 'isOff' } as const, false)
 const isSoft = atom({ plugin: 'dry-run', key: 'isSoft' } as const, false)
@@ -23,7 +24,7 @@ const repoFile = atom({ plugin: 'dry-run', key: 'repoFile' } as const, '')
 type Els = ReturnType<EngineInterface['ui']['resolve']>
 
 type View = {
-  gate: 'locked' | 'open' | 'soft'
+  gate: Gate | 'soft'
   isWaiting: boolean
   isSkipped: boolean
   text: string
