@@ -1,0 +1,7 @@
+#!/bin/sh
+# Typecheck a clean copy of HEAD. A file that is on disk but not committed fails here, not in CI.
+root=$(git rev-parse --show-toplevel)
+tmp=$(mktemp -d)
+trap 'git -C "$root" worktree remove --force "$tmp/clean"; rm -rf "$tmp"' EXIT
+git -C "$root" worktree add --detach "$tmp/clean" HEAD > /dev/null
+cd "$tmp/clean" && sh "$root/scripts/typecheck.sh"
