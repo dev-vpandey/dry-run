@@ -286,7 +286,7 @@ export const register: Register = on => {
   // block the person did not ask for, so the ring never lands on a title. Go and /stop keep it.
   on('ui.focus', { requestId: PANE_ID }, ($, e, next) => (e.element?.startsWith('fold-') ? {} : next(e)))
 
-  // Not drawn while the mod is off, and the engine leaves VS Code without a band.
+  // Not drawn while the mod is off. VS Code may not paint the band at all: that is the engine's call.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const view = await viewOf($)
     if (view === null || e.props.hasSurvey) {
