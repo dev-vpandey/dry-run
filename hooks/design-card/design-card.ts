@@ -2,7 +2,7 @@
 // short texts the band and the status line show. No engine calls here.
 // Rules: SPEC section 6. Heading names match dry-run-check.ts.
 
-import { linesOf } from './dry-run-check'
+import { linesOf } from '../edit-lock/dry-run-check'
 
 // The id and title of the Design Card pane. register.ts opens it at session start.
 export const PANE_ID = 'design-card'

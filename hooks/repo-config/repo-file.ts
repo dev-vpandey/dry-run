@@ -2,9 +2,9 @@
 // so a table test can run it. A bad file is ignored whole. The caller shows each
 // problem as a toast.
 
-import { splitPath } from './gate-path'
-import type { LockRules } from './gate-path'
-import { isAbsolute, UNKNOWN_ROOT } from './switch-file'
+import { splitPath } from '../edit-lock/gate-path'
+import type { LockRules } from '../edit-lock/gate-path'
+import { isAbsolute, UNKNOWN_ROOT } from '../edit-lock/switch-file'
 
 export type Mode = 'on' | 'soft' | 'off'
 

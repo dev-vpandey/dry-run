@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 import { isLocked } from './gate-path'
-import { lockRulesFor } from './repo-file'
+import { lockRulesFor } from '../repo-config/repo-file'
 
 const HOME = '/Users/me'
 
@@ -75,7 +75,7 @@ test('free endings, no ending and free folders are not locked', async () => {
 
 test('bad input throws', async () => {
   for (const input of BAD_INPUT) {
-    expect(() => isLocked(input as never), String(input)).toThrow()
+    expect(() => Reflect.apply(isLocked, undefined, [input]), String(input)).toThrow()
   }
 })
 
@@ -144,5 +144,5 @@ test('with no git root, repo folders free nothing but endings still work', () =>
 })
 
 test('bad input still throws with repo rules', () => {
-  expect(() => isLocked(undefined as never, HOME, RULES)).toThrow()
+  expect(() => Reflect.apply(isLocked, undefined, [undefined, HOME, RULES])).toThrow()
 })

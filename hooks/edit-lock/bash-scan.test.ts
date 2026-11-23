@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 import { namesLockedFile, namesSwitchFile } from './bash-scan'
-import { lockRulesFor } from './repo-file'
+import { lockRulesFor } from '../repo-config/repo-file'
 
 const HOME = '/Users/me'
 
