@@ -6,7 +6,8 @@
     "typecheck": "tsc --noEmit -p .",
     "lint": "eslint hooks",
     "check-structure": "sh scripts/check-structure.sh",
-    "check": "npm run typecheck && npm run lint && npm run check-structure"
+    "check-lockfile": "sh scripts/check-lockfile.sh",
+    "check": "npm run typecheck && npm run lint && npm run check-structure && npm run check-lockfile"
   },
   "devDependencies": {
     "eslint": "^9.0.0",

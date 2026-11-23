@@ -17,6 +17,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Lockfile uses the public registry
+        run: npm run check-lockfile
       - name: Install tools
         run: npm ci
       - name: Typecheck
