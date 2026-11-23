@@ -4,6 +4,9 @@ root=$(git rev-parse --show-toplevel)
 tmp=$(mktemp -d)
 trap 'git -C "$root" worktree remove --force "$tmp/clean"; rm -rf "$tmp"' EXIT
 git -C "$root" worktree add --detach "$tmp/clean" HEAD > /dev/null
-# The clean copy has no node_modules. Share the installed tools.
-ln -s "$root/node_modules" "$tmp/clean/node_modules"
-cd "$tmp/clean" && sh "$root/scripts/typecheck.sh"
+# The clean copy has no node_modules. Share the installed tools when the root has them.
+# Without them, check.sh installs its own.
+if [ -d "$root/node_modules" ]; then
+  ln -s "$root/node_modules" "$tmp/clean/node_modules"
+fi
+cd "$tmp/clean" && sh "$root/scripts/check.sh"

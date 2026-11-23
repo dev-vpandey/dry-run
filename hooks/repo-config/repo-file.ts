@@ -3,8 +3,7 @@
 // problem as a toast.
 
 import { splitPath } from '../edit-lock/gate-path'
-import type { LockRules } from '../edit-lock/gate-path'
-import { isAbsolute, UNKNOWN_ROOT } from '../edit-lock/switch-file'
+import { isAbsolute } from '../edit-lock/switch-file'
 
 export type Mode = 'on' | 'soft' | 'off'
 
@@ -214,33 +213,4 @@ export function restoreRepoFile(text: string): RepoFile {
     return emptyRepoFile()
   }
   return { mode, hasMode, lock, unlock, platform: checked.platform }
-}
-
-// True when `names` begins with `prefix`.
-function startsWith(names: string[], prefix: string[]): boolean {
-  if (prefix.length > names.length) {
-    return false
-  }
-  for (let i = 0; i < prefix.length; i++) {
-    if (names[i] !== prefix[i]) {
-      return false
-    }
-  }
-  return true
-}
-
-// The path check rules of a repo file. A relative path counts from `cwd`.
-// "" or UNKNOWN_ROOT as `gitRoot` means folders free nothing.
-export function lockRulesFor(file: RepoFile, cwd: string, gitRoot: string): LockRules {
-  const hasRoot = gitRoot !== '' && gitRoot !== UNKNOWN_ROOT
-  const rootNames = hasRoot ? splitPath(gitRoot.toLowerCase()) : []
-  const relativeNames = (path: string): string[] | null => {
-    if (!hasRoot) {
-      return null
-    }
-    const full = isAbsolute(path) ? path : cwd + '/' + path
-    const names = splitPath(full.toLowerCase())
-    return startsWith(names, rootNames) ? names.slice(rootNames.length) : null
-  }
-  return { lock: file.lock, unlock: file.unlock, relativeNames }
 }

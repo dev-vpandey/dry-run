@@ -6,3 +6,4 @@ The reviewer agent checks each diff against these rules.
 - **Purposeful lines.** Every line serves a behaviour that exists today.
 - **Evidence-based code.** Write code for cases that occur. Leave out cases nobody has shown.
 - **Testable code.** Every new behaviour has a test that fails without it.
+- **Typed values.** Narrow a value with a type guard or a `Map` lookup. The linter bans `as` casts.
