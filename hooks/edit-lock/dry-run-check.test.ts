@@ -1,5 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 import { isDryRun } from './dry-run-check'
+import { callUntyped } from './call-untyped'
 
 const HEADINGS = [
   '## Dry run',
@@ -98,7 +99,7 @@ test('only the first column counts for the language', async () => {
 
 test('text that is not a message is not a dry run', async () => {
   for (const input of [undefined, null, 42, {}, '']) {
-    expect(isDryRun(input as never), String(input)).toBe(false)
+    expect(callUntyped(isDryRun, input), String(input)).toBe(false)
   }
 })
 

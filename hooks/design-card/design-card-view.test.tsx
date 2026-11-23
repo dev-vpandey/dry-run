@@ -205,15 +205,13 @@ test('the band shows an open gate', async ($, on) => {
   expect(all).toContain('✓ GATE OPEN')
 })
 
-test('the band is left to the engine in VS Code', async ($, on) => {
+// Whether VS Code paints the band is the engine's call (ticket 05). The mod owes a tree that
+// VS Code's element table accepts, because the engine drops a row that does not validate.
+test('the band tree is valid on the VS Code surface', async ($, on) => {
   seedState(on, { text: DRY_RUN })
-  on('ui.render', ($, e) => {
-    const { Text } = $.ui.resolve(e)
-    return <Text>engine</Text>
-  })
 
   const ui = await $.ui.mount({ ...BAND, surface: 'vscode' })
-  expect((await ui.find({ type: 'Text', text: /engine/ }))?.text).toBe('engine')
+  expect((await ui.find({ type: 'Text', text: /GATE/ }))?.text).toContain('GATE LOCKED')
   await ui.unmount()
 })
 

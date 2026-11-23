@@ -1,0 +1,6 @@
+{
+  "edit-lock": ["repo-config", "design-card", "compat"],
+  "repo-config": ["design-card", "compat"],
+  "design-card": ["compat"],
+  "compat": ["edit-lock", "repo-config", "design-card"]
+}

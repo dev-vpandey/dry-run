@@ -1,0 +1,17 @@
+{
+  "name": "dry-run",
+  "private": true,
+  "description": "Dev tools only. The plugin itself has no runtime dependencies.",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p .",
+    "lint": "eslint hooks",
+    "check-structure": "sh scripts/check-structure.sh",
+    "check-lockfile": "sh scripts/check-lockfile.sh",
+    "check": "npm run typecheck && npm run lint && npm run check-structure && npm run check-lockfile"
+  },
+  "devDependencies": {
+    "eslint": "^9.0.0",
+    "typescript": "5.6.3",
+    "typescript-eslint": "^8.0.0"
+  }
+}

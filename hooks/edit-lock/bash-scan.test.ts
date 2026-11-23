@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 import { namesLockedFile, namesSwitchFile } from './bash-scan'
-import { lockRulesFor } from './repo-file'
+import { lockRulesFor } from './lock-rules'
 
 const HOME = '/Users/me'
 
@@ -109,7 +109,7 @@ test('gap: a glob that expands to the switch file is not caught', () => {
 })
 
 const RULES = lockRulesFor(
-  { mode: 'on', hasMode: true, lock: ['.yaml'], unlock: ['generated/', '.sql'], platform: null },
+  { lock: ['.yaml'], unlock: ['generated/', '.sql'] },
   '/repo',
   '/repo',
 )

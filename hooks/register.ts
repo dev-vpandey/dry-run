@@ -1,12 +1,13 @@
 import type { Args, EngineInterface, PluginOptions, Register } from 'claude-code'
-import { namesLockedFile, namesSwitchFile } from './bash-scan'
-import { isDryRun } from './dry-run-check'
-import { isLocked } from './gate-path'
-import type { LockRules } from './gate-path'
-import { emptyRepoFile, lockRulesFor, parseRepoFile, restoreRepoFile } from './repo-file'
-import type { ParseResult, RepoFile } from './repo-file'
-import { goWordKind } from './go-word'
-import { PANE_ID, PANE_TITLE, sectionCount, statusLineText } from './design-card'
+import { namesLockedFile, namesSwitchFile } from './edit-lock/bash-scan'
+import { isDryRun } from './edit-lock/dry-run-check'
+import { isLocked } from './edit-lock/gate-path'
+import type { LockRules } from './edit-lock/gate-path'
+import { lockRulesFor } from './edit-lock/lock-rules'
+import { emptyRepoFile, parseRepoFile, restoreRepoFile } from './repo-config/repo-file'
+import type { ParseResult, RepoFile } from './repo-config/repo-file'
+import { goWordKind } from './edit-lock/go-word'
+import { PANE_ID, PANE_TITLE, sectionCount, statusLineText } from './design-card/design-card'
 import {
   bundledFiles,
   indexText,
@@ -18,10 +19,10 @@ import {
   RULE_NAMES,
   statusLine,
   withReaderLine,
-} from './rules'
-import type { RuleName, RulesState } from './rules'
-import { candidateRoots, isSwitchFile, UNKNOWN_ROOT } from './switch-file'
-import { isOlderThan } from './version'
+} from './edit-lock/rules'
+import type { RuleName, RulesState } from './edit-lock/rules'
+import { candidateRoots, isSwitchFile, UNKNOWN_ROOT } from './edit-lock/switch-file'
+import { isOlderThan } from './compat/version'
 
 // The version floor. ci.yml names the same version; a test checks they match.
 export const MIN_VERSION = '2.1.304'

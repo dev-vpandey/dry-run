@@ -8,8 +8,8 @@ import { DARK } from './design-card-colors'
 import type { Tokens } from './design-card-colors'
 import { DECISION_LABELS, EXPLAINER_SECTION, foldAll, listOf, namesOf, PANE_ID, parseCard, repoUnlockLine, SECTION_NAMES, SECTION_TOTAL, sectionCount, toggleFold, topFill, wrapWords } from './design-card'
 import type { Card, Gate, Names, SectionName } from './design-card'
-import { emptyRepoFile, restoreRepoFile } from './repo-file'
-import { lockGate, openGate } from './register'
+import { emptyRepoFile, restoreRepoFile } from '../repo-config/repo-file'
+import { lockGate, openGate } from '../register'
 
 // The same state the gate module writes. The engine needs each key spelled as a literal at the
 // atom call, so these cannot share the constants of register.ts. Keep the keys in step.
@@ -286,7 +286,7 @@ export const register: Register = on => {
   // block the person did not ask for, so the ring never lands on a title. Go and /stop keep it.
   on('ui.focus', { requestId: PANE_ID }, ($, e, next) => (e.element?.startsWith('fold-') ? {} : next(e)))
 
-  // Not drawn while the mod is off, and the engine leaves VS Code without a band.
+  // Not drawn while the mod is off. VS Code may not paint the band at all: that is the engine's call.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const view = await viewOf($)
     if (view === null || e.props.hasSurvey) {

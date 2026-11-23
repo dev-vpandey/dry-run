@@ -1,6 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 import { isLocked } from './gate-path'
-import { lockRulesFor } from './repo-file'
+import { callUntyped } from './call-untyped'
+import { lockRulesFor } from './lock-rules'
 
 const HOME = '/Users/me'
 
@@ -75,7 +76,7 @@ test('free endings, no ending and free folders are not locked', async () => {
 
 test('bad input throws', async () => {
   for (const input of BAD_INPUT) {
-    expect(() => isLocked(input as never), String(input)).toThrow()
+    expect(() => callUntyped(isLocked, input), String(input)).toThrow()
   }
 })
 
@@ -87,7 +88,7 @@ test('without a home folder, no plans folder is free', async () => {
 
 // Rules from a repo file at /repo, session in /repo/src.
 const RULES = lockRulesFor(
-  { mode: 'on', hasMode: true, lock: ['.yaml'], unlock: ['generated/', '.sql', 'docs/api/'], platform: null },
+  { lock: ['.yaml'], unlock: ['generated/', '.sql', 'docs/api/'] },
   '/repo/src',
   '/repo',
 )
@@ -119,7 +120,7 @@ test('repo unlock: a folder is free, counted from the git root', () => {
 
 test('repo unlock beats repo lock and the built-in endings', () => {
   const both = lockRulesFor(
-    { mode: 'on', hasMode: true, lock: ['.yaml'], unlock: ['.yaml', '.py'], platform: null },
+    { lock: ['.yaml'], unlock: ['.yaml', '.py'] },
     '/repo',
     '/repo',
   )
@@ -134,7 +135,7 @@ test('repo rules do not free the fixed free places or lock them harder', () => {
 
 test('with no git root, repo folders free nothing but endings still work', () => {
   const noRoot = lockRulesFor(
-    { mode: 'on', hasMode: true, lock: ['.yaml'], unlock: ['generated/', '.sql'], platform: null },
+    { lock: ['.yaml'], unlock: ['generated/', '.sql'] },
     '/repo',
     '',
   )
@@ -144,5 +145,5 @@ test('with no git root, repo folders free nothing but endings still work', () =>
 })
 
 test('bad input still throws with repo rules', () => {
-  expect(() => isLocked(undefined as never, HOME, RULES)).toThrow()
+  expect(() => callUntyped(isLocked, undefined, HOME, RULES)).toThrow()
 })
