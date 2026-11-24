@@ -4,9 +4,9 @@
 import type { RenderChildren } from 'claude-code'
 import { parseCard } from './design-card'
 import type { Card } from './design-card'
-import { clawdNode, coachLine, designRows, gatePill, goRow, spinnerNode, TOKENS } from './layout-kit'
+import { clawdNode, coachLine, designRows, gatePill, goRow, linkRows, spinnerNode, TOKENS } from './layout-kit'
 import type { Actions, Els, View } from './layout-kit'
-import { designDone, sayOf } from './layout-model'
+import { DESIGN_SECTIONS, designDone, sayOf } from './layout-model'
 import type { DesignName } from './layout-model'
 
 // The tiles: the three sections with a choice. Goal is the dry run's own first line, not a tile.
@@ -53,7 +53,7 @@ export function buddyPane(els: Els, view: View, card: Card, width: number, actio
           {mark}
           <Text bold color={isDone ? t.fg : t.faint}>{` ${name.toUpperCase()}`}</Text>
         </Box>
-        {isDone && <Box flexDirection="column" paddingLeft={2}>{designRows(els, card, name, inner)}</Box>}
+        {isDone && <Box flexDirection="column" paddingLeft={2}>{designRows(els, card, name, inner, false)}</Box>}
       </Box>
     )
   }
@@ -65,6 +65,12 @@ export function buddyPane(els: Els, view: View, card: Card, width: number, actio
       <Box flexDirection="column" alignItems="flex-start" marginTop={1}>
         {TILES.map(tile)}
         <Box marginTop={1}>{coachLine(els, view, false)}</Box>
+        {written.length === DESIGN_SECTIONS.length && (
+          <Box flexDirection="column" marginTop={1}>
+            <Text bold color={t.fg}>Practice</Text>
+            {linkRows(els, card)}
+          </Box>
+        )}
       </Box>
       <Box marginTop={1}>{goRow(els, view, actions)}</Box>
     </Box>

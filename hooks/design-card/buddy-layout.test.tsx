@@ -102,3 +102,23 @@ test('with no Client the sentence is still ✻ text', async ($, on) => {
   expect(await clients($, BAND, 'vscode')).toEqual([])
   expect(await texts($, BAND, 'vscode')).toContain('✻ Drafting the dry run…')
 })
+
+const FOUR = [TWO_SECTIONS, '### 4. Pattern', '**Chosen:** none', 'No pattern, because one rule today.', '### 5. DSA', '**Chosen:** Bloom filter', 'Cheap test.', 'Big-O: O(1).', 'Two Sum · Easy · https://leetcode.com/problems/two-sum/'].join('\n')
+
+test('the LeetCode rows sit under Practice once the four sections are written, not in the DSA tile', async ($, on) => {
+  seedState(on, { ...BUDDY, dryRunText: FOUR })
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const all = (await ui.findAll({ type: 'Text' })).map(node => node.text)
+  await ui.unmount()
+
+  expect(all).toContain('Practice')
+  expect(all.indexOf('Practice')).toBeGreaterThan(all.findIndex(text => text.includes('O(1)')))
+  expect(all.filter(text => text.trim() === 'E')).toHaveLength(1)
+})
+
+test('no Practice header before the four sections are written', async ($, on) => {
+  seedState(on, { ...BUDDY, dryRunText: TWO_SECTIONS })
+
+  expect(await texts($, PANE)).not.toContain('Practice')
+})

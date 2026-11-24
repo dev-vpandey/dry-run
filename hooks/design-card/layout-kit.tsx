@@ -165,10 +165,22 @@ function chosenRows(els: Els, name: string, color: string, bg: string, why: stri
   return name === '' ? [namedPill(els, name, color, bg)] : badgeRows(els, pillOf(els, name, color, bg), name.length + 2, why, TOKENS.dim, width)
 }
 
+// The LeetCode rows of the DSA section: a blue mark, the level colored by difficulty, the link.
+export function linkRows(els: Els, card: Card) {
+  const { Box, Text, Link } = els
+  return card.dsa.rows.map(row => (
+    <Box>
+      <Text color={TOKENS.blue}>○ </Text>
+      <Text color={levelColor(row.difficulty)} bold>{`${row.difficulty} `}</Text>
+      <Link href={row.url} label={row.title} />
+    </Box>
+  ))
+}
+
 // The words of Pattern, SOLID or DSA, as rows of one line each, for the card, the rail and the
 // buddy. `width` is the room of a line. Goal is one paragraph: the layouts place it themselves.
-export function designRows(els: Els, card: Card, name: Exclude<DesignName, 'Goal'>, width: number) {
-  const { Box, Text, Link } = els
+// The buddy shows the LeetCode rows apart, under Practice, so it asks for DSA without them.
+export function designRows(els: Els, card: Card, name: Exclude<DesignName, 'Goal'>, width: number, hasLinks = true) {
   const t = TOKENS
   if (name === 'SOLID') {
     return card.solid.rows.length === 0
@@ -185,12 +197,6 @@ export function designRows(els: Els, card: Card, name: Exclude<DesignName, 'Goal
     ...chosenRows(els, card.dsa.name, t.blue, t.blueBg, card.dsa.why, width),
     ...wrappedRows(els, card.dsa.note, t.amber, width),
     ...wrappedRows(els, card.dsa.bigO, t.green, width),
-    ...card.dsa.rows.map(row => (
-      <Box>
-        <Text color={t.blue}>○ </Text>
-        <Text color={levelColor(row.difficulty)} bold>{`${row.difficulty} `}</Text>
-        <Link href={row.url} label={row.title} />
-      </Box>
-    )),
+    ...(hasLinks ? linkRows(els, card) : []),
   ]
 }
