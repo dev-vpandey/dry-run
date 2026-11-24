@@ -34,8 +34,15 @@
     "sound": {
       "type": "boolean",
       "title": "Sound",
-      "description": "Play short sounds when the gate opens or blocks. macOS only.",
+      "description": "Play short sounds when the gate opens, an edit is blocked or the coach finishes. macOS only.",
       "default": false
+    },
+    "layout": {
+      "type": "string",
+      "title": "Layout",
+      "description": "How the Design Card looks: card (boxes), rail (a timeline) or buddy (Clawd says it). In a session, /dry-run layout <name> changes it.",
+      "options": ["card", "rail", "buddy"],
+      "default": "card"
     }
   }
 }

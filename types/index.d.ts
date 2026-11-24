@@ -28,6 +28,20 @@ declare module 'claude-code' {
       dryRunText: string
       // The Design Card boxes the person folded: their names, joined with commas.
       foldedBoxes: string
+      // The section Claude is writing now, from the streamed text. "" when none.
+      liveSection: string
+      // The Design Coach: idle, reviewing, done, down or skipped. Ticket 29 writes it.
+      coachState: string
+      // The coach's flag count, for the finished costume.
+      coachFlags: number
+      // The sound setting is on and the platform is macOS.
+      isSoundOn: boolean
+      // A Client of the Design Card failed: its phase and reason. "" when none. Cleared at session start.
+      clientFault: string
+      // The layout the person chose with /dry-run layout: card, rail or buddy. "" means the setting decides.
+      layoutName: string
+      // The last few gate changes, newest last, joined with ">". Shown when a go word is dropped.
+      gateTrace: string
     }
   }
 }

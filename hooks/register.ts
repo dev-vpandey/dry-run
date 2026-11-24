@@ -8,6 +8,9 @@ import { emptyRepoFile, parseRepoFile, restoreRepoFile } from './repo-config/rep
 import type { ParseResult, RepoFile } from './repo-config/repo-file'
 import { goWordKind } from './edit-lock/go-word'
 import { PANE_ID, PANE_TITLE, sectionCount, statusLineText } from './design-card/design-card'
+import { LAYOUT_NAMES, layoutNamed, layoutOf } from './design-card/layout-model'
+import { soundSteps } from './design-card/sound'
+import type { SoundKind } from './design-card/sound'
 import {
   bundledFiles,
   indexText,
@@ -55,6 +58,11 @@ const REPO_FILE = { plugin: 'dry-run', key: 'repoFile' } as const
 const PLATFORM = { plugin: 'dry-run', key: 'platform' } as const
 const IS_GATE_TOAST_SHOWN = { plugin: 'dry-run', key: 'isGateToastShown' } as const
 const LAST_PROBLEMS = { plugin: 'dry-run', key: 'lastProblems' } as const
+// The layout the person chose with /dry-run layout. "" means the setting decides.
+const LAYOUT_NAME = { plugin: 'dry-run', key: 'layoutName' } as const
+// The last gate changes, newest last, joined with ">". A dropped go shows it, to find why the gate was not waiting.
+const GATE_TRACE = { plugin: 'dry-run', key: 'gateTrace' } as const
+const TRACE_LENGTH = 6
 
 // The index went into this thread. It resets with a new session and a clear.
 const IS_INDEX_SENT = { plugin: 'dry-run', key: 'isIndexSent' } as const
@@ -65,6 +73,13 @@ const IS_DRY_RUN_SEEN = { plugin: 'dry-run', key: 'isDryRunSeen' } as const
 
 // The text of the newest dry run, for the Design Card. "" when none was posted.
 const DRY_RUN_TEXT = { plugin: 'dry-run', key: 'dryRunText' } as const
+
+// The section Claude is writing, for Clawd. The Design Card view writes it; a finished turn
+// and a new thread clear it. The sound setting is on and the platform is macOS.
+const LIVE_SECTION = { plugin: 'dry-run', key: 'liveSection' } as const
+const IS_SOUND_ON = { plugin: 'dry-run', key: 'isSoundOn' } as const
+// A Client of the Design Card failed this session (the view writes it): a new session retries.
+const CLIENT_FAULT = { plugin: 'dry-run', key: 'clientFault' } as const
 
 const REPO_FILE_PATH = '/.claude/dry-run.json'
 
@@ -124,6 +139,11 @@ async function isDryRunSeen($: EngineInterface): Promise<boolean> {
 async function dryRunTextOf($: EngineInterface): Promise<string> {
   const read = await $.state.get(DRY_RUN_TEXT)
   return typeof read.value === 'string' ? read.value : ''
+}
+
+async function isSoundOn($: EngineInterface): Promise<boolean> {
+  const read = await $.state.get(IS_SOUND_ON)
+  return read.value === true
 }
 
 async function isGateToastShown($: EngineInterface): Promise<boolean> {
@@ -198,9 +218,34 @@ async function homeDir($: EngineInterface): Promise<string> {
 
 const GATE_OPEN_TOAST = '✓ Gate open. Edits allowed for this dry run.'
 
+// One sound at a time: a run of blocked edits would otherwise stack their thuds.
+let isSoundPlaying = false
+
+// Plays the notes of a sound one after another, when the setting is on and no other sound is
+// playing. It never throws: a sound that cannot play costs nothing else. Callers do not wait
+// for it (`void playSound`).
+export async function playSound($: EngineInterface, kind: SoundKind): Promise<void> {
+  if (isSoundPlaying) {
+    return
+  }
+  isSoundPlaying = true
+  try {
+    if (await isSoundOn($)) {
+      for (const argv of soundSteps(kind)) {
+        await $.process.run(argv)
+      }
+    }
+  } catch {
+    // No sound is not an error.
+  } finally {
+    isSoundPlaying = false
+  }
+}
+
 // The deny answer of an edit tool, with the toast that names the blocked path.
 function denyEdit($: EngineInterface, path: string): { deny: string } {
   $.ui.toast(`⊘ Blocked Update(${path}) — Post a dry run, then say "go".`)
+  void playSound($, 'blocked')
   return { deny: DENY_TEXT }
 }
 
@@ -266,12 +311,37 @@ async function registerStopCommand($: EngineInterface): Promise<void> {
   }
 }
 
-async function startSession($: EngineInterface, cwd: string): Promise<void> {
+// Sound is on when the setting says so and the platform is macOS (`afplay`). The platform is
+// asked only when the setting is on.
+async function soundWanted($: EngineInterface, options: PluginOptions): Promise<boolean> {
+  if (options.sound !== true) {
+    return false
+  }
+  try {
+    return (await $.session.info()).platform === 'macos'
+  } catch {
+    return false
+  }
+}
+
+// Adds one gate step to the trace: the last few steps, newest last.
+async function trace($: EngineInterface, step: string): Promise<void> {
+  const read = await $.state.get(GATE_TRACE)
+  const steps = typeof read.value === 'string' && read.value !== '' ? read.value.split('>') : []
+  await $.state.set(GATE_TRACE, [...steps, step].slice(-TRACE_LENGTH).join('>'))
+}
+
+async function startSession($: EngineInterface, cwd: string, options: PluginOptions): Promise<void> {
+  await $.state.set(IS_SOUND_ON, await soundWanted($, options))
+  await $.state.set(CLIENT_FAULT, '')
+  await $.state.set(LAYOUT_NAME, '')
+  await $.state.set(GATE_TRACE, '')
   await $.state.set(IS_OPEN, false)
   await $.state.set(IS_SESSION_SET, false)
   await $.state.set(CWD, cwd)
   await $.state.set(GIT_ROOT, await findGitRoot($, cwd))
   await $.state.set(IS_WAITING, false)
+  await trace($, 'start')
   await $.state.set(IS_SKIPPED, false)
   await $.state.set(IS_SOFT, false)
   await $.state.set(IS_GATE_TOAST_SHOWN, false)
@@ -299,6 +369,7 @@ async function resetThread($: EngineInterface): Promise<void> {
   await $.state.set(IS_INDEX_SENT, false)
   await $.state.set(IS_DRY_RUN_SEEN, false)
   await $.state.set(DRY_RUN_TEXT, '')
+  await $.state.set(LIVE_SECTION, '')
 }
 
 const RULES_TOOL_NAME = 'dry_run_rules'
@@ -512,7 +583,9 @@ export async function openGate($: EngineInterface, isSkipped: boolean): Promise<
   await $.state.set(IS_OPEN, true)
   await $.state.set(IS_WAITING, false)
   await $.state.set(IS_SKIPPED, isSkipped)
+  await trace($, 'open')
   $.ui.toast(GATE_OPEN_TOAST)
+  void playSound($, 'open')
   await refreshStatus($)
 }
 
@@ -546,9 +619,30 @@ async function statusText($: EngineInterface): Promise<string> {
   return `dry-run mod: on (source: ${source}). Gate ${gate}.`
 }
 
-// /dry-run, /dry-run on and /dry-run off. Anything else shows the usage.
-async function runDryRunCommand($: EngineInterface, args: string): Promise<{ text: string }> {
+const LAYOUT_USAGE = `Use /dry-run layout ${LAYOUT_NAMES.slice(0, -1).join(', ')} or ${LAYOUT_NAMES[LAYOUT_NAMES.length - 1]}.`
+
+// /dry-run layout shows the layout, /dry-run layout rail sets it for this session. The settings
+// decide the layout of a new session.
+async function runLayoutCommand($: EngineInterface, name: string, options: PluginOptions): Promise<string> {
+  const wanted = name.trim()
+  if (wanted === '') {
+    const stored = (await $.state.get(LAYOUT_NAME)).value
+    return `dry-run layout: ${layoutOf(stored === '' || stored === undefined ? options.layout : stored)}. ${LAYOUT_USAGE}`
+  }
+  const layout = layoutNamed(wanted)
+  if (layout === undefined) {
+    return LAYOUT_USAGE
+  }
+  await $.state.set(LAYOUT_NAME, layout)
+  return `dry-run layout: ${layout}.`
+}
+
+// /dry-run, /dry-run on, /dry-run off and /dry-run layout. Anything else shows the usage.
+async function runDryRunCommand($: EngineInterface, args: string, options: PluginOptions): Promise<{ text: string }> {
   const word = args.trim().toLowerCase()
+  if (word === 'layout' || word.startsWith('layout ')) {
+    return { text: await runLayoutCommand($, word.slice('layout'.length), options) }
+  }
   if (word === 'off') {
     await $.state.set(IS_OFF, true)
     await $.state.set(IS_SESSION_SET, true)
@@ -558,7 +652,7 @@ async function runDryRunCommand($: EngineInterface, args: string): Promise<{ tex
     await $.state.set(IS_SESSION_SET, true)
     await lockGate($)
   } else if (word !== '') {
-    return { text: 'Use /dry-run, /dry-run on or /dry-run off.' }
+    return { text: 'Use /dry-run, /dry-run on, /dry-run off or /dry-run layout.' }
   }
   await refreshStatus($)
   return { text: await statusText($) }
@@ -571,6 +665,7 @@ async function waitForGo($: EngineInterface, dryRun: string): Promise<void> {
   await $.state.set(IS_OPEN, false)
   await $.state.set(IS_WAITING, true)
   await $.state.set(IS_SKIPPED, false)
+  await trace($, 'wait')
   await refreshStatus($)
 }
 
@@ -591,6 +686,11 @@ function isMainLoop(e: object): boolean {
   return !('agentId' in e) || e.agentId === undefined
 }
 
+async function traceOf($: EngineInterface): Promise<string> {
+  const read = await $.state.get(GATE_TRACE)
+  return typeof read.value === 'string' ? read.value : ''
+}
+
 // A go word opens the gate. Returns why the prompt is dropped, or null to let it pass.
 async function applyGoWord($: EngineInterface, e: Args<'prompt.submit'>): Promise<string | null> {
   const kind = goWordKind(e.text)
@@ -608,7 +708,7 @@ async function applyGoWord($: EngineInterface, e: Args<'prompt.submit'>): Promis
     }
     return null
   }
-  return 'no dry run to approve'
+  return `no dry run to approve · gate ${(await isOpen($)) ? 'open' : 'locked'}, nothing waiting (${await traceOf($)})`
 }
 
 // A clear: lock the gate and read the repo file again.
@@ -622,13 +722,14 @@ export async function lockGate($: EngineInterface) {
   await $.state.set(IS_OPEN, false)
   await $.state.set(IS_WAITING, false)
   await $.state.set(IS_SKIPPED, false)
+  await trace($, 'lock')
   await refreshStatus($)
   return { text: '⊘ Gate locked. Edits to code files are blocked.' }
 }
 
 export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
-    await startSession($, e.cwd)
+    await startSession($, e.cwd, options)
     return next(e)
   })
 
@@ -668,8 +769,15 @@ export const register: Register = (on, options) => {
   // A dry run posted by the main thread locks the gate and waits for a go.
   // Lock first, then next(e): if next throws, the gate is already locked.
   on('turn.complete', async ($, e, next) => {
-    if (isMainLoop(e) && !(await isOff($)) && isDryRun(e.answer, EXPLAIN_LANGUAGE)) {
-      await waitForGo($, e.answer)
+    if (isMainLoop(e)) {
+      await $.state.set(LIVE_SECTION, '')
+    }
+    if (isMainLoop(e) && !(await isOff($))) {
+      if (isDryRun(e.answer, EXPLAIN_LANGUAGE)) {
+        await waitForGo($, e.answer)
+      } else {
+        await trace($, 'turn')
+      }
     }
     return next(e)
   })
@@ -711,7 +819,7 @@ export const register: Register = (on, options) => {
     return { text: '✓ Gate open. Edits allowed for this dry run.' }
   })
 
-  on('command.run', { command: DRY_RUN_NAME }, ($, e) => runDryRunCommand($, e.args))
+  on('command.run', { command: DRY_RUN_NAME }, ($, e) => runDryRunCommand($, e.args, options))
 
   for (const name of [STOP_NAME, STOP_FALLBACK_NAME]) {
     on('command.run', { command: name }, $ => lockGate($))

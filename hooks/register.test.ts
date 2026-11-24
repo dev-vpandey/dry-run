@@ -44,6 +44,12 @@ type Stubs = {
   unreadable?: string[]
   // The first prompt that reaches the bottom is dropped, as a hook beneath may do.
   dropFirstPrompt?: boolean
+  // The platform `$.session.info()` names. macos when left out.
+  platform?: 'macos' | 'linux'
+  // `afplay` cannot run: `$.process.run` is refused.
+  isPlayerMissing?: boolean
+  // `afplay` keeps playing until the test calls `release()`.
+  isPlayerHeld?: boolean
 }
 
 const OVERRIDE_DIR = '/Users/me/.claude/dry-run/templates/'
@@ -75,9 +81,26 @@ function stubEngine(on: On, stubs: Stubs = {}) {
   const reads: string[] = []
   const contexts: (readonly string[] | undefined)[] = []
   const tools: string[] = []
+  // The commands the mod ran with `$.process.run`, as one string each.
+  const ran: string[] = []
+  let release = () => {}
+  const held = new Promise<void>(resolve => {
+    release = resolve
+  })
   let isStateBroken = false
   on('session.start', (_: unknown, e: { cwd: string }) => ({ cwd: e.cwd }))
   on('session.version', () => ({ value: { version: stubs.version ?? '2.1.326' } }))
+  on('session.info', () => ({ value: { transcriptPath: '/t.jsonl', platform: stubs.platform ?? 'macos' } }))
+  on('process.run', async (_: unknown, e: { argv: readonly string[] }) => {
+    if (stubs.isPlayerMissing) {
+      return { deny: 'afplay missing' }
+    }
+    ran.push(e.argv.join(' '))
+    if (stubs.isPlayerHeld) {
+      await held
+    }
+    return { value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+  })
   on('command.register', (_: unknown, e: { name: string }) => {
     if (e.name === stubs.refuseCommand) {
       return { deny: 'a built-in has this name' }
@@ -153,7 +176,7 @@ function stubEngine(on: On, stubs: Stubs = {}) {
     return { text: e.text }
   })
   on('turn.complete', (_: unknown, e: { answer: string }) => ({ text: e.answer }))
-  return { toasts, blocked, statuses, panes, registered, reads, contexts, tools, breakState: () => { isStateBroken = true } }
+  return { toasts, blocked, statuses, panes, registered, reads, contexts, tools, ran, release, breakState: () => { isStateBroken = true } }
 }
 
 async function start($: Engine, cwd: string = '/') {
@@ -361,7 +384,7 @@ test('one go covers one dry run: a second go word with nothing waiting is droppe
   await complete($, DRY_RUN)
   await submit($, 'go')
 
-  expect(await submit($, 'go')).toEqual({ drop: 'no dry run to approve' })
+  expect(await submit($, 'go')).toEqual({ drop: expect.stringContaining('no dry run to approve') })
 })
 
 test('a longer message is not a go', async ($, on) => {
@@ -378,7 +401,7 @@ test('no dry run waiting: go is dropped, just do it opens the gate', async ($, o
   stubEngine(on)
   await start($)
 
-  expect(await submit($, 'go ahead')).toEqual({ drop: 'no dry run to approve' })
+  expect(await submit($, 'go ahead')).toEqual({ drop: expect.stringContaining('no dry run to approve') })
   expect(await $.tool.call(EDIT_LOCKED)).toEqual({ deny: DENY_TEXT })
 
   expect(await submit($, 'just do it')).toEqual({ text: 'just do it' })
@@ -413,11 +436,11 @@ test('/stop and a new session clear the waiting dry run', async ($, on) => {
   await start($)
   await complete($, DRY_RUN)
   await run($, 'stop')
-  expect(await submit($, 'go')).toEqual({ drop: 'no dry run to approve' })
+  expect(await submit($, 'go')).toEqual({ drop: expect.stringContaining('no dry run to approve') })
 
   await complete($, DRY_RUN)
   await start($)
-  expect(await submit($, 'go')).toEqual({ drop: 'no dry run to approve' })
+  expect(await submit($, 'go')).toEqual({ drop: expect.stringContaining('no dry run to approve') })
 })
 
 test('a go word sent from the Remote Control bridge counts as a go', async ($, on) => {
@@ -551,7 +574,7 @@ test('/dry-run with an unknown word changes nothing and shows the usage', async 
   stubEngine(on)
   await start($)
 
-  expect((await dryRun($, 'maybe')).text).toContain('Use /dry-run, /dry-run on or /dry-run off')
+  expect((await dryRun($, 'maybe')).text).toContain('Use /dry-run, /dry-run on, /dry-run off or /dry-run layout')
   expect(await $.tool.call(EDIT_LOCKED)).toEqual({ deny: DENY_TEXT })
 })
 
@@ -744,7 +767,7 @@ test('repo file soft: no gate, source repo, one gate-down toast', async ($, on) 
 test('repo file soft: dry runs still count, so a go word is still understood', async ($, on) => {
   await startWithRepoFile('{ "mode": "soft" }')($, on)
 
-  expect(await submit($, 'go')).toEqual({ drop: 'no dry run to approve' })
+  expect(await submit($, 'go')).toEqual({ drop: expect.stringContaining('no dry run to approve') })
   await complete($, DRY_RUN)
   expect(await submit($, 'go')).toEqual({ text: 'go' })
 })
@@ -1233,6 +1256,65 @@ test('rules: a prompt dropped beneath does not use up the index', async ($, on) 
   expect(lastContext(contexts)[0]).toContain('FORMAT TEXT')
 })
 
+test('a dropped go says why: the gate and the last gate steps', async ($, on) => {
+  stubEngine(on)
+  await start($)
+  await complete($, DRY_RUN)
+  await submit($, 'go')
+
+  const dropped = await submit($, 'go')
+
+  expect(dropped).toEqual({ drop: expect.stringContaining('gate open') })
+  expect(dropped).toEqual({ drop: expect.stringContaining('start>wait>open') })
+})
+
+test('a dropped go with the gate locked names the lock', async ($, on) => {
+  stubEngine(on)
+  await start($)
+
+  expect(await submit($, 'go')).toEqual({ drop: expect.stringContaining('gate locked, nothing waiting') })
+})
+
+test('the trace keeps the last six steps only', async ($, on) => {
+  stubEngine(on)
+  await start($)
+  for (let round = 0; round < 4; round++) {
+    await complete($, DRY_RUN)
+    await submit($, 'go')
+  }
+
+  const dropped = await submit($, 'go')
+
+  expect(dropped).toEqual({ drop: expect.stringContaining('(wait>open>wait>open>wait>open)') })
+})
+
+test('/dry-run layout rail sets the layout and says so', async ($, on) => {
+  stubEngine(on)
+  await start($)
+
+  expect((await dryRun($, 'layout rail')).text).toBe('dry-run layout: rail.')
+  expect((await dryRun($, 'layout')).text).toBe('dry-run layout: rail. Use /dry-run layout card, rail or buddy.')
+})
+
+test('/dry-run layout with an unknown name changes nothing and shows the choices', async ($, on) => {
+  stubEngine(on)
+  await start($)
+  await dryRun($, 'layout buddy')
+
+  expect((await dryRun($, 'layout grid')).text).toBe('Use /dry-run layout card, rail or buddy.')
+  expect((await dryRun($, 'layout')).text).toBe('dry-run layout: buddy. Use /dry-run layout card, rail or buddy.')
+})
+
+test('a new session starts with the layout of the setting again', async ($, on) => {
+  stubEngine(on)
+  await start($)
+  await dryRun($, 'layout rail')
+
+  await start($)
+
+  expect((await dryRun($, 'layout')).text).toBe('dry-run layout: card. Use /dry-run layout card, rail or buddy.')
+})
+
 // ---- Design Card: status line and toasts (ticket 27) ----
 
 const CARD_RUN = [
@@ -1328,4 +1410,106 @@ test('the Design Card pane opens at session start', async ($, on) => {
   await start($)
 
   expect(panes).toEqual(['design-card'])
+})
+
+// The sounds play without the command waiting for them, so the test lets them finish.
+async function soundsDone() {
+  for (let turn = 0; turn < 200; turn++) {
+    await Promise.resolve()
+  }
+}
+
+const TINK = 'afplay /System/Library/Sounds/Tink.aiff'
+const GLASS = 'afplay /System/Library/Sounds/Glass.aiff'
+const FUNK = 'afplay /System/Library/Sounds/Funk.aiff'
+const BASSO = 'afplay /System/Library/Sounds/Basso.aiff'
+
+test('sound: off by default, so /go and a blocked edit play nothing', async ($, on) => {
+  const engine = stubEngine(on)
+  await start($)
+
+  await run($, 'go')
+  await run($, 'stop')
+  await $.tool.call(EDIT_LOCKED)
+  await soundsDone()
+
+  expect(engine.ran).toEqual([])
+})
+
+test('sound: on, a go plays the rising chime', { options: { sound: true } }, async ($, on) => {
+  const engine = stubEngine(on)
+  await start($)
+
+  await run($, 'go')
+  await soundsDone()
+
+  expect(engine.ran).toEqual([TINK, GLASS])
+})
+
+test('sound: on, a blocked edit plays the thud', { options: { sound: true } }, async ($, on) => {
+  const engine = stubEngine(on)
+  await start($)
+
+  await $.tool.call(EDIT_LOCKED)
+  await soundsDone()
+
+  expect(engine.ran).toEqual([FUNK, BASSO])
+})
+
+test('sound: on but not macOS, nothing plays', { options: { sound: true } }, async ($, on) => {
+  const engine = stubEngine(on, { platform: 'linux' })
+  await start($)
+
+  await run($, 'go')
+  await $.tool.call(EDIT_LOCKED)
+  await soundsDone()
+
+  expect(engine.ran).toEqual([])
+})
+
+test('sound: a sound that cannot play does not fail the go', { options: { sound: true } }, async ($, on) => {
+  stubEngine(on, { isPlayerMissing: true })
+  await start($)
+
+  expect((await run($, 'go')).text).toContain('Gate open')
+  await soundsDone()
+})
+
+test('sound: blocked edits that come while a sound still plays make no second sound', { options: { sound: true } }, async ($, on) => {
+  const engine = stubEngine(on, { isPlayerHeld: true })
+  await start($)
+
+  await $.tool.call(EDIT_LOCKED)
+  await soundsDone()
+  await $.tool.call(EDIT_LOCKED)
+  await soundsDone()
+  engine.release()
+  await soundsDone()
+
+  expect(engine.ran).toEqual([FUNK, BASSO])
+})
+
+test('sound: once a sound has finished, the next one plays', { options: { sound: true } }, async ($, on) => {
+  const engine = stubEngine(on)
+  await start($)
+
+  await $.tool.call(EDIT_LOCKED)
+  await soundsDone()
+  await $.tool.call(EDIT_LOCKED)
+  await soundsDone()
+
+  expect(engine.ran).toEqual([FUNK, BASSO, FUNK, BASSO])
+})
+
+test('a new session clears the fault of a Client, so the animation is tried again', async ($, on) => {
+  stubEngine(on)
+  const writes: string[] = []
+  on('state.set', (_, e, next) => {
+    writes.push(`${e.key}=${String(e.value)}`)
+    return next(e)
+  })
+
+  await start($)
+
+  expect(writes).toContain('clientFault=')
 })
