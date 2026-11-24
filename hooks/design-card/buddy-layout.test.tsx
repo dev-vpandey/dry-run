@@ -43,7 +43,7 @@ const BUDDY = { layoutName: 'buddy' }
 test('the buddy band is a sentence, the gate and n/4: locked', async ($, on) => {
   seedState(on, BUDDY)
 
-  expect(await texts($, BAND)).toBe('✻ Gate locked. Ask for a change and I will post a dry run first. │  ⊘ GATE LOCKED  0/4')
+  expect(await texts($, BAND)).toBe('✻ Gate locked. Ask for a change and I will post a dry run first. │  ⊘ GATE LOCKED  0/4 │  card  rail  buddy ')
 })
 
 test('while a section is written the sentence spins', async ($, on) => {
@@ -123,7 +123,7 @@ test('no Practice header before the four sections are written', async ($, on) =>
   expect(await texts($, PANE)).not.toContain('Practice')
 })
 
-test('a tile label is dim and not bold once written, faint before', async ($, on) => {
+test('a tile label is dim and not bold, whether the tile is written or not, as in the prototype', async ($, on) => {
   seedState(on, { ...BUDDY, dryRunText: TWO_SECTIONS })
 
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
@@ -133,5 +133,23 @@ test('a tile label is dim and not bold once written, faint before', async ($, on
 
   expect(written?.props.color).toBe('#8a877f')
   expect(written?.props.bold).toBeUndefined()
-  expect(notYet?.props.color).toBe('#4a4844')
+  expect(notYet?.props.color).toBe('#8a877f')
+})
+
+test('the tile being written shows its words so far, with a spinner', async ($, on) => {
+  seedState(on, { layoutName: 'buddy', liveText: [TWO_SECTIONS, ''].join('\n'), liveSection: 'SOLID' })
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const spinner = await ui.find({ type: 'Client', key: 'spin-tile-SOLID' })
+  const all = (await ui.findAll({ type: 'Text' })).map(node => node.text).join('')
+  await ui.unmount()
+
+  expect(spinner).toBeDefined()
+  expect(all).toContain('one function')
+})
+
+test('while the coach is idle the buddy pane has no coach line', async ($, on) => {
+  seedState(on, { layoutName: 'buddy' })
+
+  expect(await texts($, PANE)).not.toContain('Coach idle')
 })

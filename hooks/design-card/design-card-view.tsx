@@ -7,7 +7,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, PluginOptions, Register } from 'claude-code'
 import { faultNote, faultToast } from './clawd-frames'
 import type { CoachState, GateState } from './clawd-frames'
-import { liveSectionOf } from './live-section'
+import { linesDone, liveSectionOf, streamedDryRun } from './live-section'
 import { foldAll, listOf, namesOf, PANE_ID, parseCard, SECTION_NAMES, toggleFold } from './design-card'
 import type { Names, SectionName } from './design-card'
 import { buddyBand, buddyPane } from './buddy-layout'
@@ -33,6 +33,9 @@ const foldedBoxes = atom({ plugin: 'dry-run', key: 'foldedBoxes' } as const, '')
 // The section Claude is writing now ("" when none), the Design Coach's state and its flag count.
 // This file writes liveSection; register.ts clears it; ticket 29 writes the other two.
 const liveSection = atom({ plugin: 'dry-run', key: 'liveSection' } as const, '')
+// The dry run as streamed so far, whole lines only. The pane draws it while Claude writes, so each
+// box fills as its section is written; the stored text takes over when the turn ends.
+const liveText = atom({ plugin: 'dry-run', key: 'liveText' } as const, '')
 const coachState = atom({ plugin: 'dry-run', key: 'coachState' } as const, 'idle')
 // A Client of this card failed: the card then draws still art. Set by the ui.fault hook below.
 const clientFault = atom({ plugin: 'dry-run', key: 'clientFault' } as const, '')
@@ -64,7 +67,7 @@ async function viewOf($: EngineInterface, surface: string, options: PluginOption
     gate,
     isWaiting: await read($, isWaiting),
     isSkipped: await read($, isSkipped),
-    text: await read($, dryRunText),
+    text: (await read($, liveText)) || (await read($, dryRunText)),
     unlocked: file.unlock.length,
     folded: listOf(await read($, foldedBoxes)),
     hasClient: hasClient(surface) && (await read($, clientFault)) === '',
@@ -103,6 +106,9 @@ function actionsOf($: EngineInterface): Actions {
     foldAll: async names => {
       await update($, foldedBoxes, value => foldAll(value, names))
     },
+    layout: async name => {
+      await update($, layoutName, () => name)
+    },
     go: () => openGate($, false),
     stop: async () => {
       await lockGate($)
@@ -126,12 +132,14 @@ export const register: Register = (on, options) => {
     if (e.agentId !== undefined) {
       return yield* next(e)
     }
-    // A turn that was interrupted never reached turn.complete, so its section is cleared here.
+    // A turn that was interrupted never reached turn.complete, so its section and text are cleared here.
     if (e.index === 0) {
       update($, liveSection, () => '').catch(() => undefined)
+      update($, liveText, () => '').catch(() => undefined)
     }
     let text = ''
     let last = ''
+    let stored = 0
     for await (const chunk of next(e)) {
       if (chunk.kind === 'text') {
         text += chunk.text
@@ -140,6 +148,12 @@ export const register: Register = (on, options) => {
           last = section
           // A failed write only leaves the costume as it was; it must not break the reply.
           update($, liveSection, () => section).catch(() => undefined)
+        }
+        // The pane draws the dry run as it comes: stored once for each line that is finished.
+        const kept = streamedDryRun(text)
+        if (kept !== '' && linesDone(kept) > stored) {
+          stored = linesDone(kept)
+          update($, liveText, () => kept).catch(() => undefined)
         }
       }
       yield chunk
@@ -154,9 +168,10 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
-  // A box title folds its box when pressed. The focus ring would also invert it, a colored
-  // block the person did not ask for, so the ring never lands on a title. Go and /stop keep it.
-  on('ui.focus', { requestId: PANE_ID }, ($, e, next) => (e.element?.startsWith('fold-') ? {} : next(e)))
+  // A box title folds its box when pressed, and a layout button switches the layout. The focus ring
+  // would also invert them, a colored block the person did not ask for, so the ring never lands on
+  // them. Go and /stop keep it.
+  on('ui.focus', { requestId: PANE_ID }, ($, e, next) => (e.element?.startsWith('fold-') || e.element?.startsWith('layout-') ? {} : next(e)))
 
   // Not drawn while the mod is off. VS Code may not paint the band at all: that is the engine's call.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
@@ -164,7 +179,7 @@ export const register: Register = (on, options) => {
     if (view === null || e.props.hasSurvey) {
       return next(e)
     }
-    return LAYOUTS[view.layout].band($.ui.resolve(e), view)
+    return LAYOUTS[view.layout].band($.ui.resolve(e), view, actionsOf($))
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE_ID }, async ($, e, next) => {

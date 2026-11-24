@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { liveSectionOf, SPINNER, spinnerAt } from './live-section'
+import { linesDone, liveSectionOf, SPINNER, spinnerAt, streamedDryRun } from './live-section'
 
 const DRY = '## Dry run\n'
 
@@ -51,4 +51,21 @@ test('the spinner goes forward then back', () => {
   expect(spinnerAt(0)).toBe('·')
   expect(spinnerAt(5)).toBe('✽')
   expect(spinnerAt(12)).toBe('·')
+})
+
+test('a streamed dry run is kept up to its last whole line', () => {
+  expect(streamedDryRun('## Dry run\n### 1. Bug and goal\n**Goal:** sho')).toBe('## Dry run\n### 1. Bug and goal\n')
+  expect(streamedDryRun('## Dry run\n### 1. Bug and goal\n')).toBe('## Dry run\n### 1. Bug and goal\n')
+})
+
+test('text with no dry run heading, or with the heading not finished, is not kept', () => {
+  expect(streamedDryRun('Setup:\n### 3. Setup\nsteps\n')).toBe('')
+  expect(streamedDryRun('## Dry run')).toBe('')
+  expect(streamedDryRun('')).toBe('')
+})
+
+test('the lines finished so far are counted by their line ends', () => {
+  expect(linesDone('')).toBe(0)
+  expect(linesDone('a\nb')).toBe(1)
+  expect(linesDone('a\nb\n')).toBe(2)
 })

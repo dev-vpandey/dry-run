@@ -4,7 +4,7 @@
 import type { RenderChildren } from 'claude-code'
 import { parseCard } from './design-card'
 import type { Card } from './design-card'
-import { clawdNode, coachLine, designRows, gatePill, goRow, spinnerNode, TOKENS, wrappedRows } from './layout-kit'
+import { clawdNode, coachLine, designRows, gatePill, goRow, hasCoach, layoutSwitch, spinnerNode, TOKENS, wrappedRows } from './layout-kit'
 import type { Actions, Els, View } from './layout-kit'
 import { DESIGN_SECTIONS, stopList, stopsOf } from './layout-model'
 import type { Stop, Stops } from './layout-model'
@@ -35,7 +35,7 @@ function lineColor(stop: Stop): string {
 
 // The band: `✻` then each stop as a dot and its name, joined by a line that is green once the stop
 // before it is done. The stop being written spins.
-export function railBand(els: Els, view: View): ReturnType<Els['Box']> {
+export function railBand(els: Els, view: View, actions: Actions): ReturnType<Els['Box']> {
   const { Box, Text } = els
   const t = TOKENS
   const stops = stopList(stopsOfView(view, parseCard(view.text, null)))
@@ -53,6 +53,8 @@ export function railBand(els: Els, view: View): ReturnType<Els['Box']> {
           {index < stops.length - 1 && <Text color={lineColor(stop)}>{' ── '}</Text>}
         </Box>
       ))}
+      <Text color={t.faint}> │ </Text>
+      {layoutSwitch(els, view, actions, false)}
     </Box>
   )
 }
@@ -88,7 +90,9 @@ export function railPane(els: Els, view: View, card: Card, width: number, action
     : designRows(els, card, name, inner))
   const sections = stops.sections.map((stop, index) => {
     const name = DESIGN_SECTIONS[index] ?? 'Goal'
-    return step(dotOf(els, view, stop), stop, stop.state === 'done' ? t.fg : t.faint, stop.state === 'done' ? words(name) : [])
+    // The step being written shows its words so far, once it has some.
+    const isShown = stop.state === 'done' || (stop.state === 'live' && card.done.includes(name))
+    return step(dotOf(els, view, stop), stop, isShown ? t.fg : t.faint, isShown ? words(name) : [])
   })
   return (
     <Box flexDirection="column">
@@ -97,10 +101,11 @@ export function railPane(els: Els, view: View, card: Card, width: number, action
         <Box flexDirection="column" marginLeft={1}>
           <Text bold color={t.fg}>dry-run</Text>
           {gatePill(els, view)}
+          {layoutSwitch(els, view, actions, true)}
         </Box>
       </Box>
       {sections}
-      {step(coachDot(els, view, stops.coach), stops.coach, t.fg, [coachLine(els, view, false)])}
+      {step(coachDot(els, view, stops.coach), stops.coach, t.fg, hasCoach(view) ? [coachLine(els, view, false)] : [])}
       {step(dotOf(els, view, stops.go), stops.go, t.fg, [goRow(els, view, actions)])}
     </Box>
   )

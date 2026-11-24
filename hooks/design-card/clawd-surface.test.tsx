@@ -245,3 +245,50 @@ test('after a Client failed, the band leaves its spinner out too', async ($, on)
 
   expect(all).toContain('✻ 4/7')
 })
+
+// What the stream stores for the pane, in order. A turn's own clear is not a write of text.
+function textWrites(writes: string[]): string[] {
+  return writes.filter(item => item.startsWith('liveText=') && item !== 'liveText=')
+}
+
+test('turn.step: the dry run so far is stored for the pane, once for each whole line', async ($, on) => {
+  const writes: string[] = []
+  seedState(on, {}, writes)
+  on('turn.step', async function* () {
+    yield* textChunks('## Dry run\n### 1. Bug and goal\n', '**Goal:** sh', 'ow it\n', '- **Bug:** none')
+    return STEP_RESULT
+  })
+
+  await streamed($, STEP)
+
+  expect(textWrites(writes)).toEqual([
+    'liveText=## Dry run\n### 1. Bug and goal\n',
+    'liveText=## Dry run\n### 1. Bug and goal\n**Goal:** show it\n',
+  ])
+})
+
+test('turn.step: an ordinary answer stores no text for the pane', async ($, on) => {
+  const writes: string[] = []
+  seedState(on, {}, writes)
+  on('turn.step', async function* () {
+    yield* textChunks('Setup:\n### 3. Setup\nsteps\n')
+    return STEP_RESULT
+  })
+
+  await streamed($, STEP)
+
+  expect(textWrites(writes)).toEqual([])
+})
+
+test('turn.step: a subagent step stores no text for the pane', async ($, on) => {
+  const writes: string[] = []
+  seedState(on, {}, writes)
+  on('turn.step', async function* () {
+    yield* textChunks('## Dry run\n### 1. Bug and goal\nx\n')
+    return STEP_RESULT
+  })
+
+  await streamed($, { ...STEP, agentId: 'sub-1' })
+
+  expect(textWrites(writes)).toEqual([])
+})

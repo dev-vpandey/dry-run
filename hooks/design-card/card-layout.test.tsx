@@ -39,7 +39,7 @@ async function clients($: Engine, part: typeof BAND | typeof PANE, surface: 'ter
 }
 
 test('the default layout is the card: the pane is boxes with the coach box last', async ($, on) => {
-  seedState(on, { dryRunText: TWO_SECTIONS })
+  seedState(on, { dryRunText: TWO_SECTIONS, coachState: 'done' })
 
   const all = await texts($, PANE)
   expect(all).toContain('▾ Goal')
@@ -48,10 +48,10 @@ test('the default layout is the card: the pane is boxes with the coach box last'
   expect(all.indexOf('Design Coach')).toBeGreaterThan(all.indexOf('▾ SOLID'))
 })
 
-test('the card band: the gate, the count and the coach after a bar', async ($, on) => {
+test('the card band: the gate, the count and the layout buttons after a bar', async ($, on) => {
   seedState(on, { dryRunText: TWO_SECTIONS })
 
-  expect(await texts($, BAND)).toBe('✻ dry-run  ⊘ GATE LOCKED  ◆ 2/7  │ ○ Coach idle')
+  expect(await texts($, BAND)).toBe('✻ dry-run  ⊘ GATE LOCKED  ◆ 2/7  │  card  rail  buddy ')
 })
 
 test('a stored layout of card is the same as none', async ($, on) => {
@@ -148,4 +148,45 @@ test('the name of the section being written in the band is Claude-colored and no
 
   expect(name?.props.color).toBe('#d77757')
   expect(name?.props.bold).toBeUndefined()
+})
+
+const STREAMED = ['## Dry run', '### 1. Bug and goal', '**Goal:** the new goal', '### 3. SOLID', 'None at stake: one function.', ''].join('\n')
+
+test('the text streamed so far is drawn instead of the stored dry run', async ($, on) => {
+  seedState(on, { dryRunText: TWO_SECTIONS, liveText: '## Dry run\n### 1. Bug and goal\n**Goal:** the new goal\n', liveSection: 'Goal' })
+
+  const all = await texts($, PANE)
+  expect(all).toContain('the new goal')
+  expect(all).not.toContain('show the gate')
+})
+
+test('the box being written shows what is written so far and keeps spinning', async ($, on) => {
+  seedState(on, { liveText: STREAMED, liveSection: 'SOLID' })
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const spinner = await ui.find({ type: 'Client', key: 'spin-box-SOLID' })
+  const all = (await ui.findAll({ type: 'Text' })).map(node => node.text).join('')
+  await ui.unmount()
+
+  expect(spinner?.props.props).toEqual({ label: 'writing…', color: '#d77757' })
+  expect(all).toContain('one function')
+})
+
+test('the band counts the sections before the one being written', async ($, on) => {
+  seedState(on, { liveText: STREAMED, liveSection: 'SOLID' })
+
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  const count = await ui.find({ type: 'Client', key: 'spin-count' })
+  await ui.unmount()
+
+  expect(count?.props.props).toMatchObject({ label: '2/7' })
+})
+
+test('while the coach is idle the card shows no coach line and no coach box', async ($, on) => {
+  seedState(on, { dryRunText: TWO_SECTIONS })
+
+  const band = await texts($, BAND)
+  const pane = await texts($, PANE)
+  expect(band).not.toContain('Coach')
+  expect(pane).not.toContain('Coach')
 })

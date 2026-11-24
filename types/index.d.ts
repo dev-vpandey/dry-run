@@ -30,6 +30,7 @@ declare module 'claude-code' {
       foldedBoxes: string
       // The section Claude is writing now, from the streamed text. "" when none.
       liveSection: string
+      liveText: string
       // The Design Coach: idle, reviewing, done, down or skipped. Ticket 29 writes it.
       coachState: string
       // The coach's flag count, for the finished costume.

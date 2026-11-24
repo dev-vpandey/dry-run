@@ -83,3 +83,9 @@ test('the buddy says what it is doing, in the prototype words', () => {
 test('an open gate takes over from a finished coach, as it does for Clawd', () => {
   expect(sayOf({ live: '', coach: 'done', gate: 'open', flags: 2 })).toBe('Go! Edits are open for this dry run.')
 })
+
+test('the section being written is not done yet, even when its heading is in the text', () => {
+  expect(designDone(['Goal', 'SOLID'], 'SOLID')).toEqual(['Goal'])
+  const stops = stopList(stopsOf({ done: ['Goal', 'SOLID'], live: 'SOLID', coach: 'idle', isOpen: false }))
+  expect(stops.map(stop => stop.state)).toEqual(['done', 'live', 'todo', 'todo', 'todo', 'todo'])
+})

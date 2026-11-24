@@ -42,7 +42,7 @@ export const SECTION_TOTAL = SECTIONS.length - 1
 export const SECTION_NAMES: readonly SectionName[] = SECTIONS.map(section => section.name)
 
 const CHOSEN = '**Chosen:**'
-const GOAL = '**Goal:**'
+const GOAL = 'goal:'
 const BIG_O = 'Big-O:'
 const LEETCODE_START = 'https://leetcode.com/'
 const NOT_ON_LIST = 'not on list'
@@ -286,6 +286,16 @@ function noteOf(name: string, list: string[] | undefined, isDsa: boolean): strin
   return isDsa ? `${NOT_ON_LIST} · ${NO_LINK}` : NOT_ON_LIST
 }
 
+// The goal: the "Goal:" line, with or without a list mark or bold; else the first line that is
+// not the Bug line, so a section written in another shape still fills its box.
+function goalOf(body: string[]): string {
+  const labelled = valueAfter(body, GOAL, true)
+  if (labelled !== '') {
+    return labelled
+  }
+  return body.map(plain).find(line => !line.toLowerCase().startsWith('bug:')) ?? ''
+}
+
 // The card of one dry run text. A text with no sections gives an empty card.
 export function parseCard(text: string, names: Names | null): Card {
   const lines = linesOf(text)
@@ -298,7 +308,7 @@ export function parseCard(text: string, names: Names | null): Card {
   const patternName = valueAfter(patternBody, CHOSEN)
   const dsaName = valueAfter(dsaBody, CHOSEN)
   return {
-    goal: valueAfter(body.get('Goal') ?? [], GOAL),
+    goal: goalOf(body.get('Goal') ?? []),
     changes: changesOf(body.get('Change table') ?? []),
     example: exampleOf(body.get('Worked example') ?? []),
     decisions: decisionsOf(body.get('Open decisions') ?? []),

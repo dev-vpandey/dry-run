@@ -45,3 +45,15 @@ export function liveSectionOf(text: string): SectionName | '' {
   }
   return ''
 }
+
+// How many lines of the text are finished: those with a line end after them.
+export function linesDone(text: string): number {
+  return text.split('\n').length - 1
+}
+
+// The dry run streamed so far, up to its last whole line, for the pane to draw while Claude is
+// still writing. Nothing until the "## Dry run" line is whole: an ordinary answer is not kept.
+export function streamedDryRun(text: string): string {
+  const whole = text.slice(0, text.lastIndexOf('\n') + 1)
+  return whole.split('\n').includes(DRY_RUN_HEADING) ? whole : ''
+}

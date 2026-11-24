@@ -9,6 +9,7 @@ import type { CoachState, GateState, Hue } from './clawd-frames'
 import { drawClawd } from './clawd-surface'
 import { wrapWords } from './design-card'
 import type { Card, SectionName } from './design-card'
+import { LAYOUT_NAMES } from './layout-model'
 import type { DesignName, LayoutName } from './layout-model'
 
 export type Els = ReturnType<EngineInterface['ui']['resolve']>
@@ -30,6 +31,7 @@ export type View = {
 // What a press does. The view owns the state; a layout only names the press.
 export type Actions = {
   fold: (name: string) => Promise<void>
+  layout: (name: LayoutName) => Promise<void>
   foldAll: (names: string[]) => Promise<void>
   go: () => Promise<void>
   stop: () => Promise<void>
@@ -88,10 +90,35 @@ export function spinnerNode(els: Els, view: View, key: string, label: string, co
   return background === undefined ? <Text color={color}>{`✻ ${label}`}</Text> : pillOf(els, `✻ ${label}`, color, background)
 }
 
+// The three layouts as buttons, the one in force marked. The same row sits in the band and in
+// each pane, so a layout can be changed from either.
+export function layoutSwitch(els: Els, view: View, actions: Actions, isLabelled: boolean) {
+  const { Box, Text, Button } = els
+  const t = TOKENS
+  return (
+    <Box>
+      {isLabelled && <Text color={t.faint}>layout </Text>}
+      {LAYOUT_NAMES.map(name => (
+        <Button key={`layout-${name}`} plain onPress={() => actions.layout(name)}>
+          {name === view.layout ? pillOf(els, name, t.claude, t.claudeBg) : <Text color={t.dim}>{` ${name} `}</Text>}
+        </Button>
+      ))}
+    </Box>
+  )
+}
+
+// The coach has nothing to show until it is built (ticket 29): an idle coach has no line, no box.
+export function hasCoach(view: View): boolean {
+  return view.coach !== 'idle'
+}
+
 // The coach in one line: `short` is the band's, the long one is the pane's.
 export function coachLine(els: Els, view: View, isShort: boolean) {
   const { Box, Text } = els
   const t = TOKENS
+  if (!hasCoach(view)) {
+    return null
+  }
   if (view.coach === 'reviewing') {
     return spinnerNode(els, view, 'coach', 'Coach reviewing…', t.claude)
   }
@@ -102,7 +129,7 @@ export function coachLine(els: Els, view: View, isShort: boolean) {
   if (view.coach === 'down') {
     return <Text color={t.red}>✗ Coach unavailable</Text>
   }
-  return <Box><Text color={t.faint}>{view.coach === 'skipped' ? '○ Coach skipped' : '○ Coach idle'}</Text></Box>
+  return <Box><Text color={t.faint}>○ Coach skipped</Text></Box>
 }
 
 // The Go row: the open gate shows its approval and /stop, a waiting dry run shows Go, and

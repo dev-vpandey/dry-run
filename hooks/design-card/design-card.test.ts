@@ -240,3 +240,19 @@ test('a LeetCode row with no known difficulty is not a row', async () => {
   const text = ['### 5. DSA', '**Chosen:** x', 'Odd Problem · Unknown · https://leetcode.com/problems/odd/'].join('\n')
   expect(parseCard(text, NAMES).dsa.rows).toEqual([])
 })
+
+test('a Goal line with a list mark, bold or another case still fills the Goal box', () => {
+  const goalOf = (line: string) => parseCard(['### 1. Bug and goal', line].join('\n'), NAMES).goal
+  expect(goalOf('- **Goal:** boxes fill live')).toBe('boxes fill live')
+  expect(goalOf('* goal: boxes fill live')).toBe('boxes fill live')
+  expect(goalOf('1. **Goal:** boxes fill live')).toBe('boxes fill live')
+})
+
+test('a Goal box with no Goal label shows the first line that is not the Bug line', () => {
+  const card = parseCard(['### 1. Bug and goal', '- **Bug:** none', '- Boxes fill as Claude writes.'].join('\n'), NAMES)
+  expect(card.goal).toBe('Boxes fill as Claude writes.')
+})
+
+test('a Goal box with only a Bug line has no goal yet', () => {
+  expect(parseCard(['### 1. Bug and goal', '**Bug:** none'].join('\n'), NAMES).goal).toBe('')
+})

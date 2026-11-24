@@ -4,7 +4,7 @@
 import type { RenderChildren } from 'claude-code'
 import { parseCard } from './design-card'
 import type { Card } from './design-card'
-import { clawdNode, coachLine, designRows, gatePill, goRow, linkRows, spinnerNode, TOKENS } from './layout-kit'
+import { clawdNode, coachLine, designRows, gatePill, goRow, hasCoach, layoutSwitch, linkRows, spinnerNode, TOKENS } from './layout-kit'
 import type { Actions, Els, View } from './layout-kit'
 import { DESIGN_SECTIONS, designDone, sayOf } from './layout-model'
 import type { DesignName } from './layout-model'
@@ -18,7 +18,7 @@ function sentenceOf(view: View): string {
 
 // The band: the sentence, the gate and how many of the four sections are written. The sentence
 // spins while a section or the coach is at work.
-export function buddyBand(els: Els, view: View): ReturnType<Els['Box']> {
+export function buddyBand(els: Els, view: View, actions: Actions): ReturnType<Els['Box']> {
   const { Box, Text } = els
   const t = TOKENS
   const count = designDone(parseCard(view.text, null).done, view.live).length
@@ -29,6 +29,8 @@ export function buddyBand(els: Els, view: View): ReturnType<Els['Box']> {
       <Text color={t.faint}> │ </Text>
       {gatePill(els, view)}
       <Text color={t.dim}>{` ${count}/4`}</Text>
+      <Text color={t.faint}> │ </Text>
+      {layoutSwitch(els, view, actions, false)}
     </Box>
   )
 }
@@ -51,9 +53,9 @@ export function buddyPane(els: Els, view: View, card: Card, width: number, actio
       <Box flexDirection="column" marginTop={1}>
         <Box>
           {mark}
-          <Text color={isDone ? t.dim : t.faint}>{` ${name.toUpperCase()}`}</Text>
+          <Text color={t.dim}>{` ${name.toUpperCase()}`}</Text>
         </Box>
-        {isDone && <Box flexDirection="column" paddingLeft={2}>{designRows(els, card, name, inner, false)}</Box>}
+        {(isDone || (view.live === name && card.done.includes(name))) && <Box flexDirection="column" paddingLeft={2}>{designRows(els, card, name, inner, false)}</Box>}
       </Box>
     )
   }
@@ -62,9 +64,10 @@ export function buddyPane(els: Els, view: View, card: Card, width: number, actio
       {clawdNode(els, view)}
       <Text color={t.fg}>{sentenceOf(view)}</Text>
       {gatePill(els, view)}
+      {layoutSwitch(els, view, actions, true)}
       <Box flexDirection="column" alignItems="flex-start">
         {TILES.map(tile)}
-        <Box marginTop={1}>{coachLine(els, view, false)}</Box>
+        {hasCoach(view) && <Box marginTop={1}>{coachLine(els, view, false)}</Box>}
         {written.length === DESIGN_SECTIONS.length && (
           <Box flexDirection="column" marginTop={1}>
             <Text bold color={t.fg}>Practice</Text>

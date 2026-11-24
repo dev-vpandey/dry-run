@@ -110,14 +110,14 @@ test('with the first section live the count is 0/7', async ($, on) => {
   expect(spinner?.props.props).toMatchObject({ label: '0/7' })
 })
 
-test('the count is the larger of the stored sections and the live section place', async ($, on) => {
+test('the count while a section is written is the sections before it, not the stored ones', async ($, on) => {
   seedState(on, { liveSection: 'Goal', dryRunText: GOAL_AND_SOLID })
 
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
   const spinner = await ui.find({ type: 'Client', key: 'spin-count' })
   await ui.unmount()
 
-  expect(spinner?.props.props).toMatchObject({ label: '2/7' })
+  expect(spinner?.props.props).toMatchObject({ label: '0/7' })
 })
 
 test('the language explainer being live does not push the count past 7', async ($, on) => {

@@ -4,17 +4,17 @@
 import type { RenderChildren } from 'claude-code'
 import { DECISION_LABELS, EXPLAINER_SECTION, repoUnlockLine, SECTION_NAMES, SECTION_TOTAL, sectionCount, topFill } from './design-card'
 import type { Card, SectionName } from './design-card'
-import { badgeRows, clawdNode, coachLine, designRows, gatePill, goRow, pillOf, spinnerNode, TOKENS, wrappedRows } from './layout-kit'
+import { badgeRows, clawdNode, coachLine, designRows, gatePill, goRow, hasCoach, layoutSwitch, pillOf, spinnerNode, TOKENS, wrappedRows } from './layout-kit'
 import type { Actions, Els, View } from './layout-kit'
 
 // The band: `✻ dry-run`, the gate, how many sections are written and the one being written, then
-// the coach. The sections before the one being written are written already, though the text of
-// the dry run is stored only when the turn ends.
-export function cardBand(els: Els, view: View): ReturnType<Els['Box']> {
+// the coach and the layout buttons. While a section is being written, the count is the sections
+// before it.
+export function cardBand(els: Els, view: View, actions: Actions): ReturnType<Els['Box']> {
   const { Box, Text } = els
   const t = TOKENS
   const before = view.live === '' ? 0 : SECTION_NAMES.indexOf(view.live)
-  const count = Math.min(SECTION_TOTAL, Math.max(sectionCount(view.text), before))
+  const count = Math.min(SECTION_TOTAL, view.live === '' ? sectionCount(view.text) : before)
   const label = `${count}/${SECTION_TOTAL}`
   let counter = pillOf(els, `◆ ${label}`, t.claude, t.claudeBg)
   if (view.live !== '') {
@@ -29,8 +29,10 @@ export function cardBand(els: Els, view: View): ReturnType<Els['Box']> {
       {gatePill(els, view)}
       {counter}
       {view.live === '' ? null : <Text color={t.claude}>{` ${view.live}`}</Text>}
-      <Text color={t.faint}> │ </Text>
+      {hasCoach(view) && <Text color={t.faint}> │ </Text>}
       {coachLine(els, view, true)}
+      <Text color={t.faint}> │ </Text>
+      {layoutSwitch(els, view, actions, false)}
     </Box>
   )
 }
@@ -79,7 +81,9 @@ export function cardPane(els: Els, view: View, card: Card, width: number, action
         <Text color={color} bold>{title}</Text>
       </Button>
     )
-    return frame(title, button, color, isFolded ? [text('…', color)] : rows)
+    // The box being written keeps a spinner under what is written so far.
+    const live = view.live === name ? [spinnerNode(els, view, `box-${name}`, 'writing…', t.claude)] : []
+    return frame(title, button, color, isFolded ? [text('…', color)] : [...rows, ...live])
   }
   const changes = card.changes.length === 0
     ? [text(dash, t.fg)]
@@ -132,6 +136,7 @@ export function cardPane(els: Els, view: View, card: Card, width: number, action
             <Text color={t.claudeHi}>{' · Design Card'}</Text>
           </Box>
           {gatePill(els, view)}
+          {layoutSwitch(els, view, actions, true)}
           {isAnyWritten && (
             <Button key="fold-all" plain hotkey="f" label={isAllFolded ? 'unfold all' : 'fold all'} onPress={() => actions.foldAll(shown)} />
           )}
@@ -146,7 +151,7 @@ export function cardPane(els: Els, view: View, card: Card, width: number, action
       {section('Worked example', t.fg, example)}
       {section('Open decisions', t.amber, decisions)}
       {card.done.includes(EXPLAINER_SECTION) && section(EXPLAINER_SECTION, t.violet, explainer)}
-      {frame(' Design Coach ', <Text color={t.amber} bold>{' Design Coach '}</Text>, t.amber, [coachLine(els, view, false)])}
+      {hasCoach(view) && frame(' Design Coach ', <Text color={t.amber} bold>{' Design Coach '}</Text>, t.amber, [coachLine(els, view, false)])}
       {view.unlocked > 0 && text(repoUnlockLine(view.unlocked), t.amber)}
     </Box>
   )

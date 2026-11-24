@@ -43,7 +43,7 @@ const RAIL = { layoutName: 'rail' }
 test('the rail band has six stops joined by lines: nothing written yet', async ($, on) => {
   seedState(on, RAIL)
 
-  expect(await texts($, BAND)).toBe('✻ ○ Goal ── ○ SOLID ── ○ Pattern ── ○ DSA ── ○ Coach ── ○ Go')
+  expect(await texts($, BAND)).toBe('✻ ○ Goal ── ○ SOLID ── ○ Pattern ── ○ DSA ── ○ Coach ── ○ Go │  card  rail  buddy ')
 })
 
 test('a written section is a ● and its name is plain text', async ($, on) => {
@@ -143,4 +143,23 @@ test('a section title is plain text once written and faint before; Coach and Go 
   expect(notYet?.props.color).toBe('#4a4844')
   expect(coach?.props.color).toBe('#e6e3dc')
   expect(go?.props.color).toBe('#e6e3dc')
+})
+
+test('the step being written shows its words so far, with a spinner dot', async ($, on) => {
+  const streamed = [TWO_SECTIONS, ''].join('\n')
+  seedState(on, { ...RAIL, liveText: streamed, liveSection: 'SOLID' })
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const dot = await ui.find({ type: 'Client', key: 'spin-dot-SOLID' })
+  const all = (await ui.findAll({ type: 'Text' })).map(node => node.text).join('')
+  await ui.unmount()
+
+  expect(dot).toBeDefined()
+  expect(all).toContain('one function')
+})
+
+test('while the coach is idle the rail pane has no coach line', async ($, on) => {
+  seedState(on, RAIL)
+
+  expect(await texts($, PANE)).not.toContain('Coach idle')
 })

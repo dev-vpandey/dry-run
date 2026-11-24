@@ -32,9 +32,10 @@ export const DESIGN_SECTIONS = ['Goal', 'SOLID', 'Pattern', 'DSA'] as const
 export type DesignName = (typeof DESIGN_SECTIONS)[number]
 
 // The design sections that are written: those with text, and those before the one being written.
+// The one being written is not written yet, though its heading and first lines may be in the text.
 export function designDone(done: readonly SectionName[], live: SectionName | ''): DesignName[] {
   const before = live === '' ? 0 : SECTION_NAMES.indexOf(live)
-  return DESIGN_SECTIONS.filter(name => done.includes(name) || SECTION_NAMES.indexOf(name) < before)
+  return DESIGN_SECTIONS.filter(name => (done.includes(name) && name !== live) || SECTION_NAMES.indexOf(name) < before)
 }
 
 export type StopState = 'done' | 'live' | 'down' | 'todo'

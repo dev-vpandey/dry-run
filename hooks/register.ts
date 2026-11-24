@@ -77,6 +77,7 @@ const DRY_RUN_TEXT = { plugin: 'dry-run', key: 'dryRunText' } as const
 // The section Claude is writing, for Clawd. The Design Card view writes it; a finished turn
 // and a new thread clear it. The sound setting is on and the platform is macOS.
 const LIVE_SECTION = { plugin: 'dry-run', key: 'liveSection' } as const
+const LIVE_TEXT = { plugin: 'dry-run', key: 'liveText' } as const
 const IS_SOUND_ON = { plugin: 'dry-run', key: 'isSoundOn' } as const
 // A Client of the Design Card failed this session (the view writes it): a new session retries.
 const CLIENT_FAULT = { plugin: 'dry-run', key: 'clientFault' } as const
@@ -377,6 +378,7 @@ async function resetThread($: EngineInterface): Promise<void> {
   await $.state.set(IS_DRY_RUN_SEEN, false)
   await $.state.set(DRY_RUN_TEXT, '')
   await $.state.set(LIVE_SECTION, '')
+  await $.state.set(LIVE_TEXT, '')
 }
 
 const RULES_TOOL_NAME = 'dry_run_rules'
@@ -780,6 +782,10 @@ export const register: Register = (on, options) => {
       } else {
         await recordGateStep($, 'turn')
       }
+    }
+    // The stored dry run takes over from the streamed text, which is cleared last.
+    if (isMainLoop(e)) {
+      await $.state.set(LIVE_TEXT, '')
     }
     return next(e)
   })
