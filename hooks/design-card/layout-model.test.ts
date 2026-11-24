@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import { designDone, LAYOUT_NAMES, layoutNamed, layoutOf, sayOf, stopsOf } from './layout-model'
+import { designDone, LAYOUT_NAMES, layoutFor, layoutNamed, layoutOf, sayOf, stopList, stopsOf } from './layout-model'
 
 test('there are three layouts: card, rail and buddy', () => {
   expect(LAYOUT_NAMES).toEqual(['card', 'rail', 'buddy'])
@@ -21,6 +21,15 @@ test('layoutNamed gives the layout, or nothing when the name is not one', () => 
   expect(layoutNamed(3)).toBeUndefined()
 })
 
+test('the layout in force is the one chosen in the session, else the setting, else the card', () => {
+  expect(layoutFor('buddy', 'rail')).toBe('buddy')
+  expect(layoutFor('', 'rail')).toBe('rail')
+  expect(layoutFor(undefined, 'buddy')).toBe('buddy')
+  expect(layoutFor('grid', 'rail')).toBe('rail')
+  expect(layoutFor('', undefined)).toBe('card')
+  expect(layoutFor('', 'grid')).toBe('card')
+})
+
 test('the design sections done are the four of the rail, in order, and nothing else', () => {
   expect(designDone(['Goal', 'Change table', 'SOLID', 'Worked example'], '')).toEqual(['Goal', 'SOLID'])
   expect(designDone([], '')).toEqual([])
@@ -33,18 +42,18 @@ test('the sections before the one being written count as done', () => {
 })
 
 test('the rail has six stops: the four sections, the coach and go', () => {
-  const stops = stopsOf({ done: [], live: '', coach: 'idle', isOpen: false })
+  const stops = stopList(stopsOf({ done: [], live: '', coach: 'idle', isOpen: false }))
   expect(stops.map(stop => stop.name)).toEqual(['Goal', 'SOLID', 'Pattern', 'DSA', 'Coach', 'Go'])
   expect(stops.every(stop => stop.state === 'todo')).toBe(true)
 })
 
 test('a done section is done and the one being written is live', () => {
-  const stops = stopsOf({ done: ['Goal'], live: 'SOLID', coach: 'idle', isOpen: false })
+  const stops = stopList(stopsOf({ done: ['Goal'], live: 'SOLID', coach: 'idle', isOpen: false }))
   expect(stops.map(stop => stop.state)).toEqual(['done', 'live', 'todo', 'todo', 'todo', 'todo'])
 })
 
 test('the coach stop is live while reviewing, done when done or skipped, down when down', () => {
-  const state = (coach: 'reviewing' | 'done' | 'skipped' | 'down' | 'idle') => stopsOf({ done: [], live: '', coach, isOpen: false })[4]?.state
+  const state = (coach: 'reviewing' | 'done' | 'skipped' | 'down' | 'idle') => stopsOf({ done: [], live: '', coach, isOpen: false }).coach.state
   expect(state('reviewing')).toBe('live')
   expect(state('done')).toBe('done')
   expect(state('skipped')).toBe('done')
@@ -53,7 +62,7 @@ test('the coach stop is live while reviewing, done when done or skipped, down wh
 })
 
 test('the go stop is done once the gate is open', () => {
-  expect(stopsOf({ done: [], live: '', coach: 'idle', isOpen: true })[5]?.state).toBe('done')
+  expect(stopsOf({ done: [], live: '', coach: 'idle', isOpen: true }).go.state).toBe('done')
 })
 
 test('the buddy says what it is doing, in the prototype words', () => {

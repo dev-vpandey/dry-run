@@ -3,16 +3,14 @@
 
 import type { RenderChildren } from 'claude-code'
 import { parseCard } from './design-card'
-import type { Card, SectionName } from './design-card'
+import type { Card } from './design-card'
 import { clawdNode, coachLine, designRows, gatePill, goRow, spinnerNode, TOKENS } from './layout-kit'
 import type { Actions, Els, View } from './layout-kit'
 import { designDone, sayOf } from './layout-model'
+import type { DesignName } from './layout-model'
 
-const TILES: readonly { name: SectionName; label: string }[] = [
-  { name: 'SOLID', label: 'SOLID' },
-  { name: 'Pattern', label: 'PATTERN' },
-  { name: 'DSA', label: 'DSA' },
-]
+// The tiles: the three sections with a choice. Goal is the dry run's own first line, not a tile.
+const TILES: readonly Exclude<DesignName, 'Goal'>[] = ['SOLID', 'Pattern', 'DSA']
 
 function sentenceOf(view: View): string {
   return sayOf({ live: view.live, coach: view.coach, gate: view.gate, flags: view.flags })
@@ -41,7 +39,7 @@ export function buddyPane(els: Els, view: View, card: Card, width: number, actio
   const t = TOKENS
   const inner = Math.max(10, width - 6)
   const written = designDone(card.done, view.live)
-  const tile = (name: SectionName, label: string) => {
+  const tile = (name: Exclude<DesignName, 'Goal'>) => {
     const isDone = written.includes(name)
     let mark: RenderChildren = <Text color={t.faint}>○</Text>
     if (isDone) {
@@ -53,7 +51,7 @@ export function buddyPane(els: Els, view: View, card: Card, width: number, actio
       <Box flexDirection="column" marginTop={1}>
         <Box>
           {mark}
-          <Text bold color={isDone ? t.fg : t.faint}>{` ${label}`}</Text>
+          <Text bold color={isDone ? t.fg : t.faint}>{` ${name.toUpperCase()}`}</Text>
         </Box>
         {isDone && <Box flexDirection="column" paddingLeft={2}>{designRows(els, card, name, inner)}</Box>}
       </Box>
@@ -65,10 +63,10 @@ export function buddyPane(els: Els, view: View, card: Card, width: number, actio
       <Text color={t.fg}>{sentenceOf(view)}</Text>
       {gatePill(els, view)}
       <Box flexDirection="column" alignItems="flex-start" marginTop={1}>
-        {TILES.map(item => tile(item.name, item.label))}
+        {TILES.map(tile)}
         <Box marginTop={1}>{coachLine(els, view, false)}</Box>
-        <Box marginTop={1}>{goRow(els, view, actions)}</Box>
       </Box>
+      <Box marginTop={1}>{goRow(els, view, actions)}</Box>
     </Box>
   )
 }

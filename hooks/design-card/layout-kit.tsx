@@ -1,7 +1,7 @@
 // What the three layouts (card, rail, buddy) share: the view they draw from, the colors, the
 // pill, the gate pill, Clawd, the spinner, the coach line and the Go row. Rules: SPEC section 6.
 
-import type { EngineInterface } from 'claude-code'
+import type { EngineInterface, RenderChildren } from 'claude-code'
 import { DARK } from './design-card-colors'
 import type { Tokens } from './design-card-colors'
 import { moodOf } from './clawd-frames'
@@ -9,7 +9,7 @@ import type { CoachState, GateState, Hue } from './clawd-frames'
 import { drawClawd } from './clawd-surface'
 import { wrapWords } from './design-card'
 import type { Card, SectionName } from './design-card'
-import type { LayoutName } from './layout-model'
+import type { DesignName, LayoutName } from './layout-model'
 
 export type Els = ReturnType<EngineInterface['ui']['resolve']>
 
@@ -129,36 +129,68 @@ export function goRow(els: Els, view: View, actions: Actions) {
   return <Text color={t.amber}>▶ Go [g] needs a dry run</Text>
 }
 
-// The words of one of the four design sections, as rows of one line each, for the rail and the
-// buddy. `width` is the room of a line.
-export function designRows(els: Els, card: Card, name: SectionName, width: number) {
+// Rows of one line each: the words wrapped to `width`. Nothing for no words.
+export function wrappedRows(els: Els, value: string, color: string, width: number) {
+  const { Text } = els
+  return value === '' ? [] : wrapWords(value, width, width).map(line => <Text color={color}>{line}</Text>)
+}
+
+// A badge, then the words after it on the same line; the rest of the words wrap below it.
+export function badgeRows(els: Els, badge: RenderChildren, badgeWidth: number, value: string, color: string, width: number) {
+  const { Box, Text } = els
+  const [first = '', ...rest] = wrapWords(value, width - badgeWidth, width)
+  return [
+    <Box>
+      {badge}
+      <Text color={color}>{` ${first}`}</Text>
+    </Box>,
+    ...rest.map(line => <Text color={color}>{line}</Text>),
+  ]
+}
+
+function levelColor(level: 'E' | 'M' | 'H'): string {
+  if (level === 'E') {
+    return TOKENS.green
+  }
+  return level === 'M' ? TOKENS.amber : TOKENS.red
+}
+
+// A name in a pill, or a dash when the dry run gave none.
+function namedPill(els: Els, value: string, color: string, bg: string) {
+  return value === '' ? <els.Text color={TOKENS.fg}>—</els.Text> : pillOf(els, value, color, bg)
+}
+
+// The words of Pattern and DSA after the pill: the pill and the first line of the why share a line.
+function chosenRows(els: Els, name: string, color: string, bg: string, why: string, width: number) {
+  return name === '' ? [namedPill(els, name, color, bg)] : badgeRows(els, pillOf(els, name, color, bg), name.length + 2, why, TOKENS.dim, width)
+}
+
+// The words of Pattern, SOLID or DSA, as rows of one line each, for the card, the rail and the
+// buddy. `width` is the room of a line. Goal is one paragraph: the layouts place it themselves.
+export function designRows(els: Els, card: Card, name: Exclude<DesignName, 'Goal'>, width: number) {
   const { Box, Text, Link } = els
   const t = TOKENS
-  const lines = (value: string, color: string) => (value === '' ? [] : wrapWords(value, width, width).map(line => <Text color={color}>{line}</Text>))
-  const named = (value: string, color: string, bg: string) => (value === '' ? <Text color={t.fg}>—</Text> : pillOf(els, value, color, bg))
-  if (name === 'Goal') {
-    return lines(card.goal === '' ? '—' : card.goal, t.dim)
-  }
   if (name === 'SOLID') {
     return card.solid.rows.length === 0
-      ? lines(card.solid.note === '' ? '—' : card.solid.note, t.dim)
-      : card.solid.rows.flatMap(row => [pillOf(els, row.name, t.term, t.claude), ...lines(row.why, t.dim)])
+      ? wrappedRows(els, card.solid.note === '' ? '—' : card.solid.note, t.dim, width)
+      : card.solid.rows.flatMap(row => badgeRows(els, pillOf(els, row.name, t.term, t.claude), row.name.length + 3, row.why, t.dim, width))
   }
   if (name === 'Pattern') {
-    return [named(card.pattern.name, t.violet, t.violetBg), ...lines(card.pattern.note, t.amber), ...lines(card.pattern.why, t.dim)]
-  }
-  if (name === 'DSA') {
     return [
-      named(card.dsa.name, t.blue, t.blueBg),
-      ...lines(card.dsa.why, t.dim),
-      ...lines(card.dsa.bigO, t.green),
-      ...card.dsa.rows.map(row => (
-        <Box>
-          <Text color={t.blue}>○ </Text>
-          <Link href={row.url} label={row.title} />
-        </Box>
-      )),
+      ...chosenRows(els, card.pattern.name, t.violet, t.violetBg, card.pattern.why, width),
+      ...wrappedRows(els, card.pattern.note, t.amber, width),
     ]
   }
-  return []
+  return [
+    ...chosenRows(els, card.dsa.name, t.blue, t.blueBg, card.dsa.why, width),
+    ...wrappedRows(els, card.dsa.note, t.amber, width),
+    ...wrappedRows(els, card.dsa.bigO, t.green, width),
+    ...card.dsa.rows.map(row => (
+      <Box>
+        <Text color={t.blue}>○ </Text>
+        <Text color={levelColor(row.difficulty)} bold>{`${row.difficulty} `}</Text>
+        <Link href={row.url} label={row.title} />
+      </Box>
+    )),
+  ]
 }

@@ -1265,7 +1265,7 @@ test('a dropped go says why: the gate and the last gate steps', async ($, on) =>
   const dropped = await submit($, 'go')
 
   expect(dropped).toEqual({ drop: expect.stringContaining('gate open') })
-  expect(dropped).toEqual({ drop: expect.stringContaining('start>wait>open') })
+  expect(dropped).toEqual({ drop: expect.stringMatching(/start@\d\d:\d\d:\d\d>wait@\d\d:\d\d:\d\d>open@\d\d:\d\d:\d\d\)/) })
 })
 
 test('a dropped go with the gate locked names the lock', async ($, on) => {
@@ -1285,7 +1285,7 @@ test('the trace keeps the last six steps only', async ($, on) => {
 
   const dropped = await submit($, 'go')
 
-  expect(dropped).toEqual({ drop: expect.stringContaining('(wait>open>wait>open>wait>open)') })
+  expect(dropped).toEqual({ drop: expect.stringMatching(/\((wait@[\d:]{8}>open@[\d:]{8}>){2}wait@[\d:]{8}>open@[\d:]{8}\)/) })
 })
 
 test('/dry-run layout rail sets the layout and says so', async ($, on) => {

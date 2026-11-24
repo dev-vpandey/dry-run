@@ -8,7 +8,7 @@ import { emptyRepoFile, parseRepoFile, restoreRepoFile } from './repo-config/rep
 import type { ParseResult, RepoFile } from './repo-config/repo-file'
 import { goWordKind } from './edit-lock/go-word'
 import { PANE_ID, PANE_TITLE, sectionCount, statusLineText } from './design-card/design-card'
-import { LAYOUT_NAMES, layoutNamed, layoutOf } from './design-card/layout-model'
+import { LAYOUT_NAMES, layoutFor, layoutNamed } from './design-card/layout-model'
 import { soundSteps } from './design-card/sound'
 import type { SoundKind } from './design-card/sound'
 import {
@@ -324,11 +324,18 @@ async function soundWanted($: EngineInterface, options: PluginOptions): Promise<
   }
 }
 
-// Adds one gate step to the trace: the last few steps, newest last.
-async function trace($: EngineInterface, step: string): Promise<void> {
+// TEMPORARY diagnostic: remove it, with the suffix of the dropped-go reason, once the cause of the
+// dropped go is found (ticket 28, "Layouts" note). A go word was dropped 70 s after a valid dry run;
+// the last gate steps, each with its time, show which step cleared the waiting mark.
+async function gateTraceOf($: EngineInterface): Promise<string> {
   const read = await $.state.get(GATE_TRACE)
-  const steps = typeof read.value === 'string' && read.value !== '' ? read.value.split('>') : []
-  await $.state.set(GATE_TRACE, [...steps, step].slice(-TRACE_LENGTH).join('>'))
+  return typeof read.value === 'string' ? read.value : ''
+}
+
+async function recordGateStep($: EngineInterface, step: string): Promise<void> {
+  const steps = (await gateTraceOf($)).split('>').filter(item => item !== '')
+  const time = new Date().toTimeString().slice(0, 8)
+  await $.state.set(GATE_TRACE, [...steps, `${step}@${time}`].slice(-TRACE_LENGTH).join('>'))
 }
 
 async function startSession($: EngineInterface, cwd: string, options: PluginOptions): Promise<void> {
@@ -341,7 +348,7 @@ async function startSession($: EngineInterface, cwd: string, options: PluginOpti
   await $.state.set(CWD, cwd)
   await $.state.set(GIT_ROOT, await findGitRoot($, cwd))
   await $.state.set(IS_WAITING, false)
-  await trace($, 'start')
+  await recordGateStep($, 'start')
   await $.state.set(IS_SKIPPED, false)
   await $.state.set(IS_SOFT, false)
   await $.state.set(IS_GATE_TOAST_SHOWN, false)
@@ -583,7 +590,7 @@ export async function openGate($: EngineInterface, isSkipped: boolean): Promise<
   await $.state.set(IS_OPEN, true)
   await $.state.set(IS_WAITING, false)
   await $.state.set(IS_SKIPPED, isSkipped)
-  await trace($, 'open')
+  await recordGateStep($, 'open')
   $.ui.toast(GATE_OPEN_TOAST)
   void playSound($, 'open')
   await refreshStatus($)
@@ -627,7 +634,7 @@ async function runLayoutCommand($: EngineInterface, name: string, options: Plugi
   const wanted = name.trim()
   if (wanted === '') {
     const stored = (await $.state.get(LAYOUT_NAME)).value
-    return `dry-run layout: ${layoutOf(stored === '' || stored === undefined ? options.layout : stored)}. ${LAYOUT_USAGE}`
+    return `dry-run layout: ${layoutFor(stored, options.layout)}. ${LAYOUT_USAGE}`
   }
   const layout = layoutNamed(wanted)
   if (layout === undefined) {
@@ -665,7 +672,7 @@ async function waitForGo($: EngineInterface, dryRun: string): Promise<void> {
   await $.state.set(IS_OPEN, false)
   await $.state.set(IS_WAITING, true)
   await $.state.set(IS_SKIPPED, false)
-  await trace($, 'wait')
+  await recordGateStep($, 'wait')
   await refreshStatus($)
 }
 
@@ -686,11 +693,6 @@ function isMainLoop(e: object): boolean {
   return !('agentId' in e) || e.agentId === undefined
 }
 
-async function traceOf($: EngineInterface): Promise<string> {
-  const read = await $.state.get(GATE_TRACE)
-  return typeof read.value === 'string' ? read.value : ''
-}
-
 // A go word opens the gate. Returns why the prompt is dropped, or null to let it pass.
 async function applyGoWord($: EngineInterface, e: Args<'prompt.submit'>): Promise<string | null> {
   const kind = goWordKind(e.text)
@@ -708,7 +710,7 @@ async function applyGoWord($: EngineInterface, e: Args<'prompt.submit'>): Promis
     }
     return null
   }
-  return `no dry run to approve · gate ${(await isOpen($)) ? 'open' : 'locked'}, nothing waiting (${await traceOf($)})`
+  return `no dry run to approve · gate ${(await isOpen($)) ? 'open' : 'locked'}, nothing waiting (${await gateTraceOf($)})`
 }
 
 // A clear: lock the gate and read the repo file again.
@@ -722,7 +724,7 @@ export async function lockGate($: EngineInterface) {
   await $.state.set(IS_OPEN, false)
   await $.state.set(IS_WAITING, false)
   await $.state.set(IS_SKIPPED, false)
-  await trace($, 'lock')
+  await recordGateStep($, 'lock')
   await refreshStatus($)
   return { text: '⊘ Gate locked. Edits to code files are blocked.' }
 }
@@ -776,7 +778,7 @@ export const register: Register = (on, options) => {
       if (isDryRun(e.answer, EXPLAIN_LANGUAGE)) {
         await waitForGo($, e.answer)
       } else {
-        await trace($, 'turn')
+        await recordGateStep($, 'turn')
       }
     }
     return next(e)

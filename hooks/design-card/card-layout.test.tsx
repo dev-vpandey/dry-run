@@ -72,3 +72,45 @@ test('the finished coach is one amber line in the band and the box', async ($, o
   expect(await texts($, BAND)).toContain('◆ 1 flag')
   expect(await texts($, PANE)).toContain('Coach done · 1 flag')
 })
+
+test('the box being written spins and says writing…; a box not written is faint with no fold button', async ($, on) => {
+  seedState(on, { liveSection: 'Pattern', dryRunText: TWO_SECTIONS })
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const writing = await ui.find({ type: 'Client', key: 'spin-box-Pattern' })
+  const waiting = await ui.find({ type: 'Text', text: 'waiting for dry run' })
+  const fold = await ui.find({ type: 'Button', key: 'fold-DSA' })
+  const foldWritten = await ui.find({ type: 'Button', key: 'fold-Goal' })
+  await ui.unmount()
+
+  expect(writing?.props.props).toEqual({ label: 'writing…', color: '#d77757' })
+  expect(waiting?.props.color).toBe('#4a4844')
+  expect(fold).toBeUndefined()
+  expect(foldWritten).toBeDefined()
+})
+
+test('fold all shows only when a box is written', async ($, on) => {
+  seedState(on, {})
+  const none = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const absent = await none.find({ type: 'Button', key: 'fold-all' })
+  await none.unmount()
+  expect(absent).toBeUndefined()
+})
+
+test('fold all is there once a box is written', async ($, on) => {
+  seedState(on, { dryRunText: TWO_SECTIONS })
+  const some = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const present = await some.find({ type: 'Button', key: 'fold-all' })
+  await some.unmount()
+  expect(present).toBeDefined()
+})
+
+test('the what and why of a change are dim, as in the prototype', async ($, on) => {
+  const withTable = [TWO_SECTIONS, '### 2. Change table', '| File | Change | Why |', '|---|---|---|', '| hooks/a.ts | new function | drops dupes |'].join('\n')
+  seedState(on, { dryRunText: withTable })
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const row = await ui.find({ type: 'Text', text: /new function/ })
+  await ui.unmount()
+  expect(row?.props.color).toBe('#8a877f')
+})

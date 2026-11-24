@@ -22,11 +22,17 @@ export function layoutOf(value: unknown): LayoutName {
   return layoutNamed(value) ?? 'card'
 }
 
+// The layout in force: the one the person chose in this session, else the one of the settings.
+export function layoutFor(chosen: unknown, setting: unknown): LayoutName {
+  return layoutNamed(chosen) ?? layoutOf(setting)
+}
+
 // The four sections the rail and the buddy show, in dry-run order.
-export const DESIGN_SECTIONS: readonly SectionName[] = ['Goal', 'SOLID', 'Pattern', 'DSA']
+export const DESIGN_SECTIONS = ['Goal', 'SOLID', 'Pattern', 'DSA'] as const
+export type DesignName = (typeof DESIGN_SECTIONS)[number]
 
 // The design sections that are written: those with text, and those before the one being written.
-export function designDone(done: readonly SectionName[], live: SectionName | ''): SectionName[] {
+export function designDone(done: readonly SectionName[], live: SectionName | ''): DesignName[] {
   const before = live === '' ? 0 : SECTION_NAMES.indexOf(live)
   return DESIGN_SECTIONS.filter(name => done.includes(name) || SECTION_NAMES.indexOf(name) < before)
 }
@@ -45,8 +51,14 @@ function coachStop(coach: CoachState): StopState {
   return coach === 'down' ? 'down' : 'todo'
 }
 
-// The rail: the four sections, then the coach, then go.
-export function stopsOf(input: StopInput): Stop[] {
+export type Stops = { sections: Stop[]; coach: Stop; go: Stop }
+
+// The rail in its order: the four sections, then the coach, then go.
+export function stopList(stops: Stops): Stop[] {
+  return [...stops.sections, stops.coach, stops.go]
+}
+
+export function stopsOf(input: StopInput): Stops {
   const written = designDone(input.done, input.live)
   const sections = DESIGN_SECTIONS.map((name): Stop => {
     if (written.includes(name)) {
@@ -54,7 +66,7 @@ export function stopsOf(input: StopInput): Stop[] {
     }
     return { name, state: input.live === name ? 'live' : 'todo' }
   })
-  return [...sections, { name: 'Coach', state: coachStop(input.coach) }, { name: 'Go', state: input.isOpen ? 'done' : 'todo' }]
+  return { sections, coach: { name: 'Coach', state: coachStop(input.coach) }, go: { name: 'Go', state: input.isOpen ? 'done' : 'todo' } }
 }
 
 export type SayInput = { live: SectionName | ''; coach: CoachState; gate: GateState; flags: number }

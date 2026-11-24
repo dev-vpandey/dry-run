@@ -108,3 +108,22 @@ test('the rail pane draws Clawd, with Go as the last step', async ($, on) => {
   await ui.unmount()
   expect(go).toBeDefined()
 })
+
+const WITH_DSA = [TWO_SECTIONS, '### 5. DSA', '**Chosen:** Bloom filter', 'Cheap test.', 'Big-O: O(1).', 'Two Sum · Easy · https://leetcode.com/problems/two-sum/'].join('\n')
+
+test('a LeetCode row in the rail has its level colored, as in the card', async ($, on) => {
+  seedState(on, { ...RAIL, dryRunText: WITH_DSA })
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const level = await ui.find({ type: 'Text', text: /^E / })
+  await ui.unmount()
+  expect(level?.props.color).toBe('#4eba65')
+})
+
+test('the coach step of the pane is an amber ◆ when done and a faint ○ when skipped', async ($, on) => {
+  seedState(on, { ...RAIL, coachState: 'done' })
+  const done = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const diamond = await done.find({ type: 'Text', text: '◆' })
+  await done.unmount()
+  expect(diamond?.props.color).toBe('#f2c14e')
+})

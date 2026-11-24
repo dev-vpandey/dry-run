@@ -13,8 +13,9 @@ import type { Names, SectionName } from './design-card'
 import { buddyBand, buddyPane } from './buddy-layout'
 import { cardBand, cardPane } from './card-layout'
 import { railBand, railPane } from './rail-layout'
-import type { Actions, Els, View } from './layout-kit'
-import { layoutOf } from './layout-model'
+import type { Actions, View } from './layout-kit'
+import { layoutFor } from './layout-model'
+import type { LayoutName } from './layout-model'
 import { emptyRepoFile, restoreRepoFile } from '../repo-config/repo-file'
 import { lockGate, openGate } from '../register'
 
@@ -59,7 +60,7 @@ async function viewOf($: EngineInterface, surface: string, options: PluginOption
   const file = repo === '' ? emptyRepoFile() : restoreRepoFile(repo)
   const chosen = await read($, layoutName)
   return {
-    layout: layoutOf(chosen === '' ? options.layout : chosen),
+    layout: layoutFor(chosen, options.layout),
     gate,
     isWaiting: await read($, isWaiting),
     isSkipped: await read($, isSkipped),
@@ -109,20 +110,11 @@ function actionsOf($: EngineInterface): Actions {
   }
 }
 
-function bandTree(els: Els, view: View) {
-  if (view.layout === 'rail') {
-    return railBand(els, view)
-  }
-  return view.layout === 'buddy' ? buddyBand(els, view) : cardBand(els, view)
-}
-
-function paneTree($: EngineInterface, els: Els, view: View, names: Names | null, width: number) {
-  const card = parseCard(view.text, names)
-  const actions = actionsOf($)
-  if (view.layout === 'rail') {
-    return railPane(els, view, card, width, actions)
-  }
-  return view.layout === 'buddy' ? buddyPane(els, view, card, width, actions) : cardPane(els, view, card, width, actions)
+// How each layout draws the band and the pane. A layout is added here and in layout-model.ts.
+const LAYOUTS: Record<LayoutName, { band: typeof cardBand; pane: typeof cardPane }> = {
+  card: { band: cardBand, pane: cardPane },
+  rail: { band: railBand, pane: railPane },
+  buddy: { band: buddyBand, pane: buddyPane },
 }
 
 // The pane is opened by register.ts at session start: the engine takes one session.start hook.
@@ -172,7 +164,7 @@ export const register: Register = (on, options) => {
     if (view === null || e.props.hasSurvey) {
       return next(e)
     }
-    return bandTree($.ui.resolve(e), view)
+    return LAYOUTS[view.layout].band($.ui.resolve(e), view)
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE_ID }, async ($, e, next) => {
@@ -180,6 +172,7 @@ export const register: Register = (on, options) => {
     if (view === null) {
       return next(e)
     }
-    return paneTree($, $.ui.resolve(e), view, await namesFrom($), e.props.bodyColumns)
+    const card = parseCard(view.text, await namesFrom($))
+    return LAYOUTS[view.layout].pane($.ui.resolve(e), view, card, e.props.bodyColumns, actionsOf($))
   })
 }

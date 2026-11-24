@@ -4,20 +4,24 @@
 import type { RenderChildren } from 'claude-code'
 import { parseCard } from './design-card'
 import type { Card } from './design-card'
-import { clawdNode, coachLine, designRows, gatePill, goRow, spinnerNode, TOKENS } from './layout-kit'
+import { clawdNode, coachLine, designRows, gatePill, goRow, spinnerNode, TOKENS, wrappedRows } from './layout-kit'
 import type { Actions, Els, View } from './layout-kit'
-import { DESIGN_SECTIONS, stopsOf } from './layout-model'
-import type { Stop } from './layout-model'
+import { DESIGN_SECTIONS, stopList, stopsOf } from './layout-model'
+import type { Stop, Stops } from './layout-model'
 
-function stopsOfView(view: View, card: Card): Stop[] {
+function stopsOfView(view: View, card: Card): Stops {
   return stopsOf({ done: card.done, live: view.live, coach: view.coach, isOpen: view.gate === 'open' })
 }
 
-function dotOf(els: Els, stop: Stop) {
+// The dot of a stop: ● done, a spinner while it is written, ✗ a coach that is down, ○ not yet.
+function dotOf(els: Els, view: View, stop: Stop) {
   const { Text } = els
   const t = TOKENS
   if (stop.state === 'done') {
     return <Text color={t.green}>●</Text>
+  }
+  if (stop.state === 'live') {
+    return spinnerNode(els, view, `dot-${stop.name}`, '', t.claude)
   }
   return stop.state === 'down' ? <Text color={t.red}>✗</Text> : <Text color={t.faint}>○</Text>
 }
@@ -34,7 +38,7 @@ function lineColor(stop: Stop): string {
 export function railBand(els: Els, view: View): ReturnType<Els['Box']> {
   const { Box, Text } = els
   const t = TOKENS
-  const stops = stopsOfView(view, parseCard(view.text, null))
+  const stops = stopList(stopsOfView(view, parseCard(view.text, null)))
   return (
     <Box>
       <Text color={t.claude}>✻ </Text>
@@ -42,7 +46,7 @@ export function railBand(els: Els, view: View): ReturnType<Els['Box']> {
         <Box>
           {stop.state === 'live' ? spinnerNode(els, view, stop.name, stop.name, t.claude) : (
             <Box>
-              {dotOf(els, stop)}
+              {dotOf(els, view, stop)}
               <Text color={stop.state === 'done' ? t.fg : t.faint}>{` ${stop.name}`}</Text>
             </Box>
           )}
@@ -53,36 +57,50 @@ export function railBand(els: Els, view: View): ReturnType<Els['Box']> {
   )
 }
 
-// The pane: Clawd, the name and the gate, then a step for each stop. A step shows its words once
-// it is done.
+// The coach step of the pane: ◆ amber when done, ○ when skipped, not the band's green ●.
+function coachDot(els: Els, view: View, stop: Stop) {
+  const { Text } = els
+  if (view.coach === 'done') {
+    return <Text color={TOKENS.amber}>◆</Text>
+  }
+  return view.coach === 'skipped' ? <Text color={TOKENS.faint}>○</Text> : dotOf(els, view, stop)
+}
+
+// The pane: Clawd with the name and the gate, then a step for each stop. A step shows its words
+// once it is done.
 export function railPane(els: Els, view: View, card: Card, width: number, actions: Actions): ReturnType<Els['Box']> {
   const { Box, Text } = els
   const t = TOKENS
   const inner = Math.max(10, width - 6)
   const stops = stopsOfView(view, card)
-  const step = (stop: Stop, body: RenderChildren[]) => (
+  const step = (dot: RenderChildren, stop: Stop, body: RenderChildren[]) => (
     <Box flexDirection="column" marginTop={1}>
       <Box>
-        {stop.state === 'live' ? spinnerNode(els, view, `step-${stop.name}`, '', t.claude) : dotOf(els, stop)}
+        {dot}
         <Text bold color={stop.state === 'todo' ? t.faint : t.fg}>{` ${stop.name}`}</Text>
       </Box>
       {body.length > 0 && <Box flexDirection="column" paddingLeft={2}>{body}</Box>}
     </Box>
   )
-  const sections = DESIGN_SECTIONS.map((name, index) => {
-    const stop: Stop = stops[index] ?? { name, state: 'todo' }
-    return step(stop, stop.state === 'done' ? designRows(els, card, name, inner) : [])
+  const words = (name: (typeof DESIGN_SECTIONS)[number]) => (name === 'Goal'
+    ? wrappedRows(els, card.goal === '' ? '—' : card.goal, t.dim, inner)
+    : designRows(els, card, name, inner))
+  const sections = stops.sections.map((stop, index) => {
+    const name = DESIGN_SECTIONS[index] ?? 'Goal'
+    return step(dotOf(els, view, stop), stop, stop.state === 'done' ? words(name) : [])
   })
-  const coach: Stop = stops[4] ?? { name: 'Coach', state: 'todo' }
-  const go: Stop = stops[5] ?? { name: 'Go', state: 'todo' }
   return (
     <Box flexDirection="column">
-      {clawdNode(els, view)}
-      <Text bold color={t.fg}>dry-run</Text>
-      {gatePill(els, view)}
+      <Box>
+        {clawdNode(els, view)}
+        <Box flexDirection="column" marginLeft={1}>
+          <Text bold color={t.fg}>dry-run</Text>
+          {gatePill(els, view)}
+        </Box>
+      </Box>
       {sections}
-      {step(coach, [coachLine(els, view, false)])}
-      {step(go, [goRow(els, view, actions)])}
+      {step(coachDot(els, view, stops.coach), stops.coach, [coachLine(els, view, false)])}
+      {step(dotOf(els, view, stops.go), stops.go, [goRow(els, view, actions)])}
     </Box>
   )
 }

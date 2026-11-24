@@ -60,7 +60,7 @@ const DRY_RUN = [
 
 const EXPLAINER = ['### 8. Language explainer', '| Construct | Java |', '|---|---|', '| set | HashSet |', 'Flow: a, b, a gives a, b.'].join('\n')
 
-type Seed = { isNamesMissing?: boolean; folded?: string; isOpen?: boolean; isWaiting?: boolean; isSkipped?: boolean; isOff?: boolean; isSoft?: boolean; text?: string; repoFile?: string }
+type Seed = { isNamesMissing?: boolean; folded?: string; isOpen?: boolean; isWaiting?: boolean; isSkipped?: boolean; isOff?: boolean; isSoft?: boolean; text?: string; repoFile?: string; layoutName?: string }
 
 // The state the engine holds, by key. A key not seeded reads as never written.
 function seedState(on: On, seed: Seed, writes: string[] = []) {
@@ -73,6 +73,7 @@ function seedState(on: On, seed: Seed, writes: string[] = []) {
     ['dryRunText', seed.text],
     ['repoFile', seed.repoFile],
     ['foldedBoxes', seed.folded],
+    ['layoutName', seed.layoutName],
   ])
   let version = 1
   on('state.get', (_: unknown, e: { plugin: string; key: string }) => {
@@ -248,7 +249,7 @@ test('the band progress pill is the Claude color on a tint', async ($, on) => {
   expect(title?.props.bold).toBe(true)
 })
 
-test('the pane puts each name in a pill and keeps its why in plain text color', async ($, on) => {
+test('the pane puts each name in a pill and keeps its why in the dim color', async ($, on) => {
   seedState(on, { text: DRY_RUN })
 
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
@@ -260,7 +261,7 @@ test('the pane puts each name in a pill and keeps its why in plain text color', 
 
   expect(solid?.props.backgroundColor).toBe(DARK.claude)
   expect(pattern?.props.backgroundColor).toBe(DARK.violetBg)
-  expect(why?.props.color).toBe(DARK.fg)
+  expect(why?.props.color).toBe(DARK.dim)
   expect(bigO?.props.color).toBe(DARK.green)
 })
 
@@ -384,4 +385,29 @@ test('the focus ring never lands on a box title, but lands on Go', async ($, on)
   await ui.unmount()
 
   expect(landed).toEqual(['go'])
+})
+
+async function bandText($: Engine, _seed: Seed) {
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  const all = (await ui.findAll({ type: 'Text' })).map(node => node.text).join('')
+  await ui.unmount()
+  return all
+}
+
+test('the band and the pane follow the stored layout: rail', async ($, on) => {
+  seedState(on, { layoutName: 'rail' })
+
+  expect(await bandText($, {})).toContain('○ Goal ── ○ SOLID')
+})
+
+test('the band follows the stored layout: buddy', async ($, on) => {
+  seedState(on, { layoutName: 'buddy' })
+
+  expect(await bandText($, {})).toContain('Gate locked. Ask for a change')
+})
+
+test('with no stored layout the setting decides, and its default is the card', async ($, on) => {
+  seedState(on, {})
+
+  expect(await bandText($, {})).toContain('◇ 0/7')
 })
