@@ -122,3 +122,16 @@ test('no Practice header before the four sections are written', async ($, on) =>
 
   expect(await texts($, PANE)).not.toContain('Practice')
 })
+
+test('a tile label is dim and not bold once written, faint before', async ($, on) => {
+  seedState(on, { ...BUDDY, dryRunText: TWO_SECTIONS })
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const written = await ui.find({ type: 'Text', text: ' SOLID' })
+  const notYet = await ui.find({ type: 'Text', text: ' PATTERN' })
+  await ui.unmount()
+
+  expect(written?.props.color).toBe('#8a877f')
+  expect(written?.props.bold).toBeUndefined()
+  expect(notYet?.props.color).toBe('#4a4844')
+})

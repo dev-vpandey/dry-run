@@ -28,7 +28,7 @@ export function cardBand(els: Els, view: View): ReturnType<Els['Box']> {
       <Text bold color={t.fg}>dry-run </Text>
       {gatePill(els, view)}
       {counter}
-      {view.live === '' ? null : <Text bold color={t.claudeHi}>{` ${view.live}`}</Text>}
+      {view.live === '' ? null : <Text color={t.claude}>{` ${view.live}`}</Text>}
       <Text color={t.faint}> │ </Text>
       {coachLine(els, view, true)}
     </Box>
@@ -85,8 +85,8 @@ export function cardPane(els: Els, view: View, card: Card, width: number, action
     ? [text(dash, t.fg)]
     : card.changes.flatMap(row => [
         <Box>
-          {pill(row.tag, t.term, row.tag === 'new' ? t.green : t.amber)}
-          <Text color={t.blue} bold>{` ${row.path}`}</Text>
+          {row.tag === 'new' ? pill(row.tag, t.green, t.greenBg) : pill(row.tag, t.amber, t.amberBg)}
+          <Text color={t.blue}>{` ${row.path}`}</Text>
         </Box>,
         ...wrapped(`${row.what} · ${row.why}`, t.dim),
       ])
@@ -107,7 +107,7 @@ export function cardPane(els: Els, view: View, card: Card, width: number, action
     ? [text(card.done.includes('Open decisions') ? 'none' : dash, t.fg)]
     : card.decisions.flatMap((decision, index) => {
         const mark = decision.isPick ? '★ pick' : '○'
-        const badge = decision.isPick ? pill(mark, t.amber, t.amberBg) : text(mark, t.fg)
+        const badge = decision.isPick ? pill(mark, t.amber, t.amberBg) : text(mark, t.faint)
         return badgeRows(els, badge, mark.length + 3, `${DECISION_LABELS[index] ?? ''}. ${decision.text}`, t.fg, inner)
       })
   const explainer = [

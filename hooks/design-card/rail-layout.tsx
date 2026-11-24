@@ -73,11 +73,12 @@ export function railPane(els: Els, view: View, card: Card, width: number, action
   const t = TOKENS
   const inner = Math.max(10, width - 6)
   const stops = stopsOfView(view, card)
-  const step = (dot: RenderChildren, stop: Stop, body: RenderChildren[]) => (
+  // A section's title is plain text once it is written and faint before; Coach and Go are always plain.
+  const step = (dot: RenderChildren, stop: Stop, titleColor: string, body: RenderChildren[]) => (
     <Box flexDirection="column" marginTop={1}>
       <Box>
         {dot}
-        <Text bold color={stop.state === 'todo' ? t.faint : t.fg}>{` ${stop.name}`}</Text>
+        <Text bold color={titleColor}>{` ${stop.name}`}</Text>
       </Box>
       {body.length > 0 && <Box flexDirection="column" paddingLeft={2}>{body}</Box>}
     </Box>
@@ -87,7 +88,7 @@ export function railPane(els: Els, view: View, card: Card, width: number, action
     : designRows(els, card, name, inner))
   const sections = stops.sections.map((stop, index) => {
     const name = DESIGN_SECTIONS[index] ?? 'Goal'
-    return step(dotOf(els, view, stop), stop, stop.state === 'done' ? words(name) : [])
+    return step(dotOf(els, view, stop), stop, stop.state === 'done' ? t.fg : t.faint, stop.state === 'done' ? words(name) : [])
   })
   return (
     <Box flexDirection="column">
@@ -99,8 +100,8 @@ export function railPane(els: Els, view: View, card: Card, width: number, action
         </Box>
       </Box>
       {sections}
-      {step(coachDot(els, view, stops.coach), stops.coach, [coachLine(els, view, false)])}
-      {step(dotOf(els, view, stops.go), stops.go, [goRow(els, view, actions)])}
+      {step(coachDot(els, view, stops.coach), stops.coach, t.fg, [coachLine(els, view, false)])}
+      {step(dotOf(els, view, stops.go), stops.go, t.fg, [goRow(els, view, actions)])}
     </Box>
   )
 }

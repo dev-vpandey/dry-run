@@ -114,3 +114,38 @@ test('the what and why of a change are dim, as in the prototype', async ($, on) 
   await ui.unmount()
   expect(row?.props.color).toBe('#8a877f')
 })
+
+test('a change tag is a tinted pill: the colored word on its dim background, not a solid block', async ($, on) => {
+  const withTable = [TWO_SECTIONS, '### 2. Change table', '| File | Change | Why |', '|---|---|---|', '| hooks/a.ts | new function | drops dupes |'].join('\n')
+  seedState(on, { dryRunText: withTable })
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const tag = await ui.find({ type: 'Text', text: / new / })
+  const path = await ui.find({ type: 'Text', text: /hooks\/a\.ts/ })
+  await ui.unmount()
+
+  expect(tag?.props).toMatchObject({ color: '#4eba65', backgroundColor: '#1d2c22' })
+  expect(path?.props.bold).toBeUndefined()
+})
+
+test('the option not picked has a faint ○', async ($, on) => {
+  const withDecisions = [TWO_SECTIONS, '### 7. Open decisions', '1. Keep the first.', '2. Keep the latest.', 'My pick: 1'].join('\n')
+  seedState(on, { dryRunText: withDecisions })
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const mark = await ui.find({ type: 'Text', text: '○' })
+  await ui.unmount()
+
+  expect(mark?.props.color).toBe('#4a4844')
+})
+
+test('the name of the section being written in the band is Claude-colored and not bold', async ($, on) => {
+  seedState(on, { liveSection: 'Pattern' })
+
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  const name = await ui.find({ type: 'Text', text: ' Pattern' })
+  await ui.unmount()
+
+  expect(name?.props.color).toBe('#d77757')
+  expect(name?.props.bold).toBeUndefined()
+})

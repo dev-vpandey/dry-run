@@ -171,7 +171,7 @@ export function linkRows(els: Els, card: Card) {
   return card.dsa.rows.map(row => (
     <Box>
       <Text color={TOKENS.blue}>○ </Text>
-      <Text color={levelColor(row.difficulty)} bold>{`${row.difficulty} `}</Text>
+      <Text color={levelColor(row.difficulty)}>{`${row.difficulty} `}</Text>
       <Link href={row.url} label={row.title} />
     </Box>
   ))
@@ -196,7 +196,7 @@ export function designRows(els: Els, card: Card, name: Exclude<DesignName, 'Goal
   return [
     ...chosenRows(els, card.dsa.name, t.blue, t.blueBg, card.dsa.why, width),
     ...wrappedRows(els, card.dsa.note, t.amber, width),
-    ...wrappedRows(els, card.dsa.bigO, t.green, width),
+    ...wrappedRows(els, card.dsa.bigO, t.dim, width),
     ...(hasLinks ? linkRows(els, card) : []),
   ]
 }

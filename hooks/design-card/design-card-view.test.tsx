@@ -262,7 +262,7 @@ test('the pane puts each name in a pill and keeps its why in the dim color', asy
   expect(solid?.props.backgroundColor).toBe(DARK.claude)
   expect(pattern?.props.backgroundColor).toBe(DARK.violetBg)
   expect(why?.props.color).toBe(DARK.dim)
-  expect(bigO?.props.color).toBe(DARK.green)
+  expect(bigO?.props.color).toBe(DARK.dim)
 })
 
 test('a LeetCode row has a blue mark and a level colored by difficulty', async ($, on) => {

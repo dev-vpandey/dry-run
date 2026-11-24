@@ -51,7 +51,7 @@ export function buddyPane(els: Els, view: View, card: Card, width: number, actio
       <Box flexDirection="column" marginTop={1}>
         <Box>
           {mark}
-          <Text bold color={isDone ? t.fg : t.faint}>{` ${name.toUpperCase()}`}</Text>
+          <Text color={isDone ? t.dim : t.faint}>{` ${name.toUpperCase()}`}</Text>
         </Box>
         {isDone && <Box flexDirection="column" paddingLeft={2}>{designRows(els, card, name, inner, false)}</Box>}
       </Box>
@@ -62,7 +62,7 @@ export function buddyPane(els: Els, view: View, card: Card, width: number, actio
       {clawdNode(els, view)}
       <Text color={t.fg}>{sentenceOf(view)}</Text>
       {gatePill(els, view)}
-      <Box flexDirection="column" alignItems="flex-start" marginTop={1}>
+      <Box flexDirection="column" alignItems="flex-start">
         {TILES.map(tile)}
         <Box marginTop={1}>{coachLine(els, view, false)}</Box>
         {written.length === DESIGN_SECTIONS.length && (

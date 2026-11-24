@@ -118,6 +118,7 @@ test('a LeetCode row in the rail has its level colored, as in the card', async (
   const level = await ui.find({ type: 'Text', text: /^E / })
   await ui.unmount()
   expect(level?.props.color).toBe('#4eba65')
+  expect(level?.props.bold).toBeUndefined()
 })
 
 test('the coach step of the pane is an amber ◆ when done and a faint ○ when skipped', async ($, on) => {
@@ -126,4 +127,20 @@ test('the coach step of the pane is an amber ◆ when done and a faint ○ when 
   const diamond = await done.find({ type: 'Text', text: '◆' })
   await done.unmount()
   expect(diamond?.props.color).toBe('#f2c14e')
+})
+
+test('a section title is plain text once written and faint before; Coach and Go are always plain', async ($, on) => {
+  seedState(on, { ...RAIL, dryRunText: TWO_SECTIONS })
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const written = await ui.find({ type: 'Text', text: ' Goal' })
+  const notYet = await ui.find({ type: 'Text', text: ' DSA' })
+  const coach = await ui.find({ type: 'Text', text: ' Coach' })
+  const go = await ui.find({ type: 'Text', text: ' Go' })
+  await ui.unmount()
+
+  expect(written?.props.color).toBe('#e6e3dc')
+  expect(notYet?.props.color).toBe('#4a4844')
+  expect(coach?.props.color).toBe('#e6e3dc')
+  expect(go?.props.color).toBe('#e6e3dc')
 })
